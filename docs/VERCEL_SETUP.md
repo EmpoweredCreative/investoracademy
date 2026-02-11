@@ -1,6 +1,6 @@
 # Step-by-Step: Setting Up WheelTracker on Vercel
 
-This guide walks you through deploying the project on Vercel and obtaining every variable needed for your environment (local `.env` or Vercel Environment Variables).
+This guide walks you through deploying the project on Vercel and obtaining every variable needed for your environment. **Local development:** copy `.env.example` to `.env` in the project root and fill in the values below (you won’t see `.env` in the file manager if it’s gitignored; create it from the example). **Vercel:** use Project → Settings → Environment Variables.
 
 ---
 
@@ -25,6 +25,8 @@ This guide walks you through deploying the project on Vercel and obtaining every
 5. **Do not** add environment variables yet. Click **Deploy**.
 6. Wait for the first deployment. It will fail without a database and auth—that’s expected. Note your project URL, e.g. `wheeltracker-xxx.vercel.app`.
 
+**Note:** This project uses Prisma 7 with the Postgres driver adapter (`@prisma/adapter-pg`). The build will fail with a PrismaClient constructor error until `DATABASE_URL` is set. Add at least `DATABASE_URL` (and other required vars) before or right after the first deploy, then redeploy.
+
 ---
 
 ## Step 2: Get `DATABASE_URL` (Vercel Postgres)
@@ -34,7 +36,7 @@ This guide walks you through deploying the project on Vercel and obtaining every
 3. Click **Create Database**.
 4. Choose **Postgres** (Vercel Postgres).
 5. Name it (e.g. `wheeltracker-db`) and pick a region close to you. Click **Create**.
-6. When the database is ready, open it and go to the **`.env.local`** tab (or **Connect** / **Quickstart**).
+6. When the database is ready, open it and go to the **Connect** / **Quickstart** tab (Vercel sometimes labels this as “.env.local” in the database view—it’s the tab that shows your Postgres connection env vars, not a file in your project).
 7. You’ll see something like:
    ```bash
    POSTGRES_URL="postgres://default:xxxxx@ep-xxx.us-east-1.postgres.vercel-storage.com:5432/verceldb?sslmode=require"
@@ -203,7 +205,7 @@ After `DATABASE_URL` (and optionally other vars) are set:
 
 | Variable            | Where to get it                          | Required |
 |---------------------|------------------------------------------|----------|
-| `DATABASE_URL`      | Vercel Storage → Postgres → `.env.local` (use `POSTGRES_URL` value) | Yes      |
+| `DATABASE_URL`      | Vercel Storage → Postgres → Connect/Quickstart tab (use `POSTGRES_URL` value) | Yes      |
 | `NEXTAUTH_SECRET`   | `openssl rand -base64 32`                | Yes      |
 | `NEXTAUTH_URL`      | Production: `https://your-app.vercel.app`; local: `http://localhost:3000` | Yes      |
 | `SENDGRID_API_KEY`  | SendGrid → Settings → API Keys          | No       |
