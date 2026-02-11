@@ -38,7 +38,7 @@ export default function JournalPage() {
     fetch(url)
       .then((r) => r.json())
       .then((data) => {
-        setTrades(data);
+        setTrades(Array.isArray(data) ? data : []);
         setLoading(false);
       });
   };

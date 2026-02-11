@@ -59,17 +59,35 @@ export default function AccountDetailPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`/api/accounts/${accountId}`).then((r) => r.json()),
-      fetch(`/api/accounts/${accountId}/instances`).then((r) => r.json()),
-    ]).then(([accountData, instanceData]) => {
-      setAccount(accountData);
-      setInstances(instanceData);
+      fetch(`/api/accounts/${accountId}`),
+      fetch(`/api/accounts/${accountId}/instances`),
+    ]).then(async ([accountRes, instancesRes]) => {
+      const accountData = await accountRes.json();
+      const instanceData = await instancesRes.json();
+      if (!accountRes.ok || accountData.error) {
+        setAccount(null);
+        setInstances([]);
+      } else {
+        setAccount(accountData);
+        setInstances(Array.isArray(instanceData) ? instanceData : []);
+      }
       setLoading(false);
     });
   }, [accountId]);
 
-  if (loading || !account) {
+  if (loading) {
     return <div className="animate-pulse h-96 bg-card rounded-xl" />;
+  }
+
+  if (!account) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-8 text-center">
+        <p className="text-muted">Account not found.</p>
+        <Link href="/accounts" className="text-accent hover:underline mt-2 inline-block">
+          Back to Accounts
+        </Link>
+      </div>
+    );
   }
 
   const openInstances = instances.filter((i) => i.status === "OPEN");

@@ -50,12 +50,16 @@ export default function WealthWheelPage() {
     fetch(`/api/accounts/${accountId}/wheel`)
       .then((r) => r.json())
       .then((data) => {
-        setWheel(data);
-        const t: Record<string, string> = {};
-        data.slices.forEach((s: WheelSlice) => {
-          t[s.category] = s.targetPct;
-        });
-        setTargets(t);
+        if (data?.slices && Array.isArray(data.slices)) {
+          setWheel(data);
+          const t: Record<string, string> = {};
+          data.slices.forEach((s: WheelSlice) => {
+            t[s.category] = s.targetPct;
+          });
+          setTargets(t);
+        } else {
+          setWheel(null);
+        }
         setLoading(false);
       });
   }, [accountId]);
@@ -79,8 +83,19 @@ export default function WealthWheelPage() {
     setWheel(data);
   };
 
-  if (loading || !wheel) {
+  if (loading) {
     return <div className="animate-pulse h-96 bg-card rounded-xl" />;
+  }
+
+  if (!wheel) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-8 text-center">
+        <p className="text-muted">Wealth Wheel data could not be loaded.</p>
+        <Link href={`/accounts/${accountId}`} className="text-accent hover:underline mt-2 inline-block">
+          Back to Account
+        </Link>
+      </div>
+    );
   }
 
   const totalValue = parseFloat(wheel.totalValue);

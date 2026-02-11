@@ -47,7 +47,7 @@ export default function ResearchPage() {
     fetch(url)
       .then((r) => r.json())
       .then((data) => {
-        setIdeas(data);
+        setIdeas(Array.isArray(data) ? data : []);
         setLoading(false);
       });
   };
