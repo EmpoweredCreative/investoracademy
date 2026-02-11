@@ -1,0 +1,37 @@
+---
+description: React and Next.js performance optimization guidelines from Vercel Engineering. Apply when writing, reviewing, or refactoring React/Next.js code.
+globs: **/*.tsx,**/*.jsx,**/app/**/*.ts,**/app/**/*.js,**/pages/**/*.tsx,**/pages/**/*.jsx
+alwaysApply: false
+---
+
+# Vercel React Best Practices
+
+Follow [Vercel React Best Practices](https://github.com/vercel-labs/agent-skills/blob/main/skills/react-best-practices/SKILL.md) for all React and Next.js work in this project.
+
+## When to Apply
+
+- Writing new React components or Next.js pages
+- Implementing data fetching (client or server)
+- Reviewing or refactoring for performance
+- Optimizing bundle size or load times
+
+## Rule Categories (by priority)
+
+1. **Eliminating Waterfalls (CRITICAL)** — `async-*`: Use Promise.all() for independent ops, defer await into branches, use Suspense to stream.
+2. **Bundle Size (CRITICAL)** — `bundle-*`: Direct imports (no barrels), next/dynamic for heavy components, defer analytics after hydration.
+3. **Server-Side (HIGH)** — `server-*`: Auth server actions, React.cache() for dedup, minimize data to client, parallelize fetches, use after() for non-blocking.
+4. **Client Data Fetching (MEDIUM-HIGH)** — `client-*`: SWR for dedup, passive scroll listeners, versioned minimal localStorage.
+5. **Re-render (MEDIUM)** — `rerender-*`: Memo expensive subtrees, primitive effect deps, derive state in render, functional setState, startTransition for non-urgent updates.
+6. **Rendering (MEDIUM)** — `rendering-*`: Animate wrapper not SVG, content-visibility for long lists, hoist static JSX, ternary not && for conditionals.
+7. **JavaScript (LOW-MEDIUM)** — `js-*`: Batch DOM/CSS, cache in loops, Set/Map for lookups, early exit, toSorted() for immutability.
+8. **Advanced (LOW)** — `advanced-*`: Handlers in refs, init once per app, useLatest for stable callbacks.
+
+## Quick patterns
+
+- **Async**: Prefer `Promise.all([a, b])` over sequential await when independent.
+- **Imports**: Import from concrete paths (e.g. `components/Button`) not barrel `index` files.
+- **Heavy UI**: Use `next/dynamic` with loading/ssr options for above-the-fold performance.
+- **State**: Expensive initial state → `useState(() => compute())`; updates used only in callbacks → avoid subscribing in render.
+- **Conditionals**: Prefer `condition ? <A /> : <B />` over `condition && <A />` to avoid rendering `0`/falsy.
+
+Reference the full skill and rule files in the repo for detailed examples and explanations.
