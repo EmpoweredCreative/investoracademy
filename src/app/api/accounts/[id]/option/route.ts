@@ -29,11 +29,14 @@ export async function POST(
       expiration: new Date(data.expiration),
       quantity: data.quantity,
       price: data.price,
+      entryDelta: data.entryDelta,
       fees: data.fees,
       occurredAt: new Date(data.occurredAt),
+      strategyType: data.strategyType,
       premiumPolicyOverride: data.premiumPolicyOverride,
       wheelCategoryOverride: data.wheelCategoryOverride,
       notes: data.notes,
+      additionalLegs: data.additionalLegs,
     });
 
     return NextResponse.json(result, { status: 201 });

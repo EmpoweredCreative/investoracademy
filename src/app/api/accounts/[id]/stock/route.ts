@@ -28,6 +28,7 @@ export async function POST(
       price: data.price,
       fees: data.fees,
       occurredAt: new Date(data.occurredAt),
+      wheelCategory: data.wheelCategory,
       notes: data.notes,
     });
 

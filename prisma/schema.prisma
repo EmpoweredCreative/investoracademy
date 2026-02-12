@@ -58,6 +58,7 @@ enum LedgerType {
   STOCK_SELL
   FEE
   ADJUSTMENT
+  CASH_DEPOSIT
 }
 
 enum CallPut {
@@ -106,9 +107,14 @@ enum StrategyType {
   SHORT_PUT
   BULL_PUT_SPREAD
   BEAR_CALL_SPREAD
+  BULL_CALL_SPREAD
+  BEAR_PUT_SPREAD
   IRON_CONDOR
+  IRON_BUTTERFLY
   SHORT_STRANGLE
   TIME_SPREAD
+  LEAP_CALL
+  LEAP_PUT
 }
 
 enum OutcomeRating {
@@ -153,8 +159,12 @@ model Account {
   userId             String
   name               String
   mode               AccountMode   @default(SIMULATED)
-  defaultPolicy      PremiumPolicy @default(CASHFLOW)
+  defaultPolicy      PremiumPolicy?
+  cashBalance        Decimal       @default(0) @db.Decimal(14, 4)
+  cashflowReserve    Decimal       @default(0) @db.Decimal(14, 4)
+  onboardingCompletedAt DateTime?
   notes              String?
+  archivedAt         DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
@@ -179,6 +189,7 @@ model Underlying {
   id            String        @id @default(cuid())
   accountId     String
   symbol        String
+  currentPrice  Decimal?      @db.Decimal(12, 4)
   premiumPolicy PremiumPolicy?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
@@ -200,6 +211,8 @@ model StrategyInstance {
   accountId              String
   underlyingId           String
   instrumentType         InstrumentType
+  strategyType           StrategyType?
+  strategyGroupId        String?
   optionAction           OptionAction?
   callPut                CallPut?
   longShort              LongShort?
@@ -250,14 +263,15 @@ model LedgerEntry {
 }
 
 model StockLot {
-  id            String     @id @default(cuid())
-  accountId     String
-  underlyingId  String
-  acquiredAt    DateTime
-  quantity      Decimal    @db.Decimal(12, 4)
-  remaining     Decimal    @db.Decimal(12, 4)
-  costBasis     Decimal    @db.Decimal(14, 4)
-  createdAt     DateTime   @default(now())
+  id               String     @id @default(cuid())
+  accountId        String
+  underlyingId     String
+  acquiredAt       DateTime
+  quantity         Decimal    @db.Decimal(12, 4)
+  remaining        Decimal    @db.Decimal(12, 4)
+  costBasis        Decimal    @db.Decimal(14, 4)  // Original total cost (purchase price × qty + fees)
+  premiumReduction Decimal    @default(0) @db.Decimal(14, 4)  // Total premium applied to reduce cost basis
+  createdAt        DateTime   @default(now())
 
   account       Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
   underlying    Underlying @relation(fields: [underlyingId], references: [id], onDelete: Cascade)
@@ -340,6 +354,7 @@ model JournalTrade {
   callPut             CallPut?
   longShort           LongShort?
   quantity            Decimal?       @db.Decimal(12, 4)
+  entryDelta          Decimal?       @db.Decimal(6, 4)
   entryPrice          Decimal?       @db.Decimal(12, 4)
   entryDateTime       DateTime?
   targetPrice         Decimal?       @db.Decimal(12, 4)
@@ -368,8 +383,8 @@ model ResearchIdea {
   strategyType          StrategyType
   dte                   Int?
   atr                   Decimal?      @db.Decimal(10, 4)
-  strikes               String?
-  deltas                String?
+  strikes               String?          // legacy – kept for backward compat
+  deltas                String?          // legacy – kept for backward compat
   netCredit             Decimal?      @db.Decimal(12, 4)
   bpe                   Decimal?      @db.Decimal(14, 4)
   netDelta              Decimal?      @db.Decimal(10, 4)
@@ -378,6 +393,38 @@ model ResearchIdea {
   notes                 String?
   wheelCategoryOverride WheelCategory?
   convertedToJournalId  String?
+
+  // ── Strategy-specific typed fields ───────────────────────
+  price                 Decimal?      @db.Decimal(12, 4)  // Current stock price
+  month                 String?                            // Expiration month label
+
+  // Single-leg / primary short leg (CC, SP, BPS, BCS, TS)
+  shortStrike           Decimal?      @db.Decimal(12, 4)
+  shortDelta            Decimal?      @db.Decimal(6, 4)
+  longStrike            Decimal?      @db.Decimal(12, 4)  // Protective long leg (BPS, BCS)
+
+  // Multi-leg: call side (IC, SS)
+  shortCallStrike       Decimal?      @db.Decimal(12, 4)
+  shortCallDelta        Decimal?      @db.Decimal(6, 4)
+  longCallStrike        Decimal?      @db.Decimal(12, 4)
+
+  // Multi-leg: put side (IC, SS)
+  shortPutStrike        Decimal?      @db.Decimal(12, 4)
+  shortPutDelta         Decimal?      @db.Decimal(6, 4)
+  longPutStrike         Decimal?      @db.Decimal(12, 4)
+
+  // Short Strangle extras
+  earningsDate          String?
+  expectedGap           Decimal?      @db.Decimal(10, 4)
+  expiration            String?
+
+  // Time Spread extras
+  spreadSubType         String?                            // Diag Call, Diag Put, Horiz Call, Horiz Put
+  longStrikeExp         String?
+  longStrikeDebit       Decimal?      @db.Decimal(12, 4)
+  shortStrikeExp        String?
+  shortStrikeCredit     Decimal?      @db.Decimal(12, 4)
+
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
 

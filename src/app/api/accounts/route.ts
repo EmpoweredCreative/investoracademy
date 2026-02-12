@@ -3,12 +3,16 @@ import { prisma } from "@/lib/db";
 import { requireAuth, handleApiError } from "@/lib/api-helpers";
 import { createAccountSchema } from "@/lib/validations";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const userId = await requireAuth();
+    const showArchived = req.nextUrl.searchParams.get("archived") === "true";
 
     const accounts = await prisma.account.findMany({
-      where: { userId },
+      where: {
+        userId,
+        archivedAt: showArchived ? { not: null } : null,
+      },
       include: {
         _count: {
           select: {

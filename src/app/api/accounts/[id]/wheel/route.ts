@@ -29,6 +29,7 @@ export async function GET(
       })),
       totalValue: wheel.totalValue.toFixed(2),
       cashBalance: wheel.cashBalance.toFixed(2),
+      cashflowReserve: wheel.cashflowReserve.toFixed(2),
     });
   } catch (error) {
     return handleApiError(error);

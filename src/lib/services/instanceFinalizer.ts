@@ -2,6 +2,7 @@ import { FinalizationReason, LedgerType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { resolvePolicy } from "./policyResolver";
 import { createReinvestSignal } from "./reinvestSignals";
+import { applyBasisReduction } from "./fifoLots";
 
 interface FinalizeInput {
   instanceId: string;
@@ -49,17 +50,29 @@ export async function finalizeInstance({ instanceId, reason, finalizedAt }: Fina
       },
     });
 
-    // Check if reinvest signal should be created
+    // Apply policy-based actions if there's net profit
     const policy = await resolvePolicy(instanceId);
-    if (policy === "REINVEST_ON_CLOSE" && nrop.greaterThan(0)) {
-      const dueAt = new Date(finalizedAt.getTime() + 48 * 60 * 60 * 1000);
-      await createReinvestSignal({
-        accountId: instance.accountId,
-        underlyingId: instance.underlyingId,
-        instanceId,
-        amount: nrop,
-        dueAt,
-      }, tx);
+
+    if (nrop.greaterThan(0)) {
+      if (policy === "REINVEST_ON_CLOSE") {
+        // Create signal to buy more shares with the premium
+        const dueAt = new Date(finalizedAt.getTime() + 48 * 60 * 60 * 1000);
+        await createReinvestSignal({
+          accountId: instance.accountId,
+          underlyingId: instance.underlyingId,
+          instanceId,
+          amount: nrop,
+          dueAt,
+        }, tx);
+      } else if (policy === "BASIS_REDUCTION") {
+        // Apply premium to reduce cost basis of existing stock lots
+        await applyBasisReduction({
+          accountId: instance.accountId,
+          underlyingId: instance.underlyingId,
+          premiumAmount: nrop,
+        }, tx);
+      }
+      // CASHFLOW: no action — premium stays as cash in the account
     }
 
     return updated;

@@ -14,6 +14,7 @@ import {
   LogOut,
   Settings,
   ChevronRight,
+  FileText,
 } from "lucide-react";
 
 const navItems = [
@@ -23,6 +24,7 @@ const navItems = [
 ];
 
 const accountNavItems = [
+  { href: "/statement", label: "Statement", icon: FileText },
   { href: "/wheel", label: "Wealth Wheel", icon: PieChart },
   { href: "/journal", label: "Journal", icon: BookOpen },
   { href: "/research", label: "Research", icon: Microscope },

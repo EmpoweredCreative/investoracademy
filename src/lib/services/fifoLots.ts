@@ -88,10 +88,20 @@ export async function consumeStockLots(
     remainingToSell = remainingToSell.minus(sellFromLot);
   }
 
+  // If there are remaining shares to sell beyond what's in existing lots,
+  // this is a short sale — create a negative-quantity lot to track the short position.
   if (remainingToSell.greaterThan(0)) {
-    throw new Error(
-      `Insufficient shares: tried to sell ${input.quantity}, only ${new Prisma.Decimal(input.quantity).minus(remainingToSell)} available`
-    );
+    const shortCostBasis = new Prisma.Decimal(input.sellPrice).mul(remainingToSell);
+    await db.stockLot.create({
+      data: {
+        accountId: input.accountId,
+        underlyingId: input.underlyingId,
+        quantity: remainingToSell.neg(),
+        remaining: remainingToSell.neg(),
+        costBasis: shortCostBasis.neg(),
+        acquiredAt: new Date(),
+      },
+    });
   }
 
   const totalProceeds = new Prisma.Decimal(input.sellPrice).mul(input.quantity);
@@ -129,4 +139,72 @@ export async function getTotalCostBasis(accountId: string): Promise<Prisma.Decim
     const costPerShare = lot.costBasis.div(lot.quantity);
     return sum.plus(costPerShare.mul(lot.remaining));
   }, new Prisma.Decimal(0));
+}
+
+/**
+ * Apply premium-based cost basis reduction to open stock lots for an underlying.
+ *
+ * Mirrors the Excel formula: Adjusted Cost Basis = Purchase Price - (Total Premium / shares)
+ *
+ * The premiumAmount is distributed proportionally across all open lots
+ * based on each lot's remaining shares relative to total remaining shares.
+ * The reduction is tracked in the `premiumReduction` field so the original
+ * cost basis is preserved.
+ */
+export async function applyBasisReduction(
+  input: {
+    accountId: string;
+    underlyingId: string;
+    premiumAmount: Prisma.Decimal;
+  },
+  tx?: TxClient
+): Promise<{ lotsUpdated: number; totalReduction: Prisma.Decimal }> {
+  const db = tx ?? prisma;
+
+  // Get all open lots for this underlying
+  const lots = await db.stockLot.findMany({
+    where: {
+      accountId: input.accountId,
+      underlyingId: input.underlyingId,
+      remaining: { gt: 0 },
+    },
+    orderBy: { acquiredAt: "asc" },
+  });
+
+  if (lots.length === 0) {
+    return { lotsUpdated: 0, totalReduction: new Prisma.Decimal(0) };
+  }
+
+  // Calculate total remaining shares across all lots
+  const totalRemaining = lots.reduce(
+    (sum, lot) => sum.plus(lot.remaining),
+    new Prisma.Decimal(0)
+  );
+
+  if (totalRemaining.lte(0)) {
+    return { lotsUpdated: 0, totalReduction: new Prisma.Decimal(0) };
+  }
+
+  // Distribute premium reduction proportionally by remaining shares
+  let distributed = new Prisma.Decimal(0);
+
+  for (let i = 0; i < lots.length; i++) {
+    const lot = lots[i];
+    // Last lot gets the remainder to avoid rounding issues
+    const lotShare =
+      i === lots.length - 1
+        ? input.premiumAmount.minus(distributed)
+        : input.premiumAmount.mul(lot.remaining).div(totalRemaining);
+
+    await db.stockLot.update({
+      where: { id: lot.id },
+      data: {
+        premiumReduction: (lot.premiumReduction ?? new Prisma.Decimal(0)).plus(lotShare),
+      },
+    });
+
+    distributed = distributed.plus(lotShare);
+  }
+
+  return { lotsUpdated: lots.length, totalReduction: distributed };
 }

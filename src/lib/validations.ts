@@ -16,11 +16,16 @@ export const registerSchema = z.object({
 export const createAccountSchema = z.object({
   name: z.string().min(1).max(100),
   mode: z.enum(["SIMULATED", "LIVE_SCHWAB"]),
-  defaultPolicy: z.enum(["CASHFLOW", "BASIS_REDUCTION", "REINVEST_ON_CLOSE"]).optional(),
+  defaultPolicy: z.enum(["CASHFLOW", "BASIS_REDUCTION", "REINVEST_ON_CLOSE"]).nullable().optional(),
   notes: z.string().max(1000).optional(),
 });
 
-export const updateAccountSchema = createAccountSchema.partial();
+export const updateAccountSchema = createAccountSchema.partial().extend({
+  defaultPolicy: z.enum(["CASHFLOW", "BASIS_REDUCTION", "REINVEST_ON_CLOSE"]).nullable().optional(),
+  cashBalance: z.number().min(0).optional(),
+  cashflowReserve: z.number().min(0).optional(),
+  onboardingCompletedAt: z.string().datetime().nullable().optional(),
+});
 
 // ─── Manual Stock Entry ─────────────────────────────────────
 export const stockEntrySchema = z.object({
@@ -30,10 +35,19 @@ export const stockEntrySchema = z.object({
   price: z.number().positive(),
   fees: z.number().min(0).default(0),
   occurredAt: z.string().datetime(),
+  wheelCategory: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]).default("CORE"),
   notes: z.string().max(1000).optional(),
 });
 
 // ─── Manual Option Entry ────────────────────────────────────
+export const optionLegSchema = z.object({
+  action: z.enum(["STO", "BTC", "BTO", "STC", "EXPIRE", "ASSIGN", "EXERCISE"]),
+  callPut: z.enum(["CALL", "PUT"]),
+  strike: z.number().positive(),
+  quantity: z.number().positive(),
+  price: z.number().min(0),
+});
+
 export const optionEntrySchema = z.object({
   symbol: z.string().min(1).max(10).transform((s) => s.toUpperCase()),
   action: z.enum(["STO", "BTC", "BTO", "STC", "EXPIRE", "ASSIGN", "EXERCISE"]),
@@ -42,11 +56,22 @@ export const optionEntrySchema = z.object({
   expiration: z.string().datetime(),
   quantity: z.number().positive(),
   price: z.number().min(0),
+  entryDelta: z.number().min(-1).max(1).optional(),
   fees: z.number().min(0).default(0),
   occurredAt: z.string().datetime(),
+  strategyType: z.enum([
+    "COVERED_CALL", "SHORT_PUT",
+    "BULL_PUT_SPREAD", "BEAR_CALL_SPREAD",
+    "BULL_CALL_SPREAD", "BEAR_PUT_SPREAD",
+    "IRON_CONDOR", "IRON_BUTTERFLY",
+    "SHORT_STRANGLE", "TIME_SPREAD",
+    "LEAP_CALL", "LEAP_PUT",
+  ]).optional(),
   premiumPolicyOverride: z.enum(["CASHFLOW", "BASIS_REDUCTION", "REINVEST_ON_CLOSE"]).optional(),
   wheelCategoryOverride: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]).optional(),
   notes: z.string().max(1000).optional(),
+  // Additional legs for multi-leg strategies
+  additionalLegs: z.array(optionLegSchema).optional(),
 });
 
 // ─── Reinvest Signal Action ─────────────────────────────────
@@ -81,34 +106,42 @@ export const wheelClassificationSchema = z.object({
 export const journalTradeSchema = z.object({
   underlyingId: z.string(),
   strategyInstanceId: z.string().optional(),
-  strike: z.number().optional(),
-  callPut: z.enum(["CALL", "PUT"]).optional(),
+  strike: z.number().nullable().optional(),
+  callPut: z.enum(["CALL", "PUT"]).nullable().optional(),
   longShort: z.enum(["LONG", "SHORT"]).optional(),
-  quantity: z.number().positive().optional(),
-  entryPrice: z.number().optional(),
-  entryDateTime: z.string().datetime().optional(),
-  targetPrice: z.number().optional(),
-  stopPrice: z.number().optional(),
-  exitPrice: z.number().optional(),
-  exitDateTime: z.string().datetime().optional(),
-  rewardRatio: z.number().optional(),
-  riskPct: z.number().optional(),
-  thesisNotes: z.string().max(5000).optional(),
-  outcomeRating: z.enum(["EXCELLENT", "GOOD", "NEUTRAL", "POOR", "TERRIBLE"]).optional(),
-  wheelCategoryOverride: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]).optional(),
+  quantity: z.number().positive().nullable().optional(),
+  entryDelta: z.number().min(-1).max(1).nullable().optional(),
+  entryPrice: z.number().nullable().optional(),
+  entryDateTime: z.string().datetime().nullable().optional(),
+  targetPrice: z.number().nullable().optional(),
+  stopPrice: z.number().nullable().optional(),
+  exitPrice: z.number().nullable().optional(),
+  exitDateTime: z.string().datetime().nullable().optional(),
+  fees: z.number().min(0).optional(),
+  rewardRatio: z.number().nullable().optional(),
+  riskPct: z.number().nullable().optional(),
+  thesisNotes: z.string().max(5000).nullable().optional(),
+  outcomeRating: z.enum(["EXCELLENT", "GOOD", "NEUTRAL", "POOR", "TERRIBLE"]).nullable().optional(),
+  wheelCategoryOverride: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]).nullable().optional(),
 });
 
 // ─── Research Idea ──────────────────────────────────────────
 export const researchIdeaSchema = z.object({
-  underlyingId: z.string(),
+  underlyingId: z.string().optional(),
+  symbol: z.string().min(1).max(10).optional(),
   strategyType: z.enum([
     "COVERED_CALL",
     "SHORT_PUT",
     "BULL_PUT_SPREAD",
     "BEAR_CALL_SPREAD",
+    "BULL_CALL_SPREAD",
+    "BEAR_PUT_SPREAD",
     "IRON_CONDOR",
+    "IRON_BUTTERFLY",
     "SHORT_STRANGLE",
     "TIME_SPREAD",
+    "LEAP_CALL",
+    "LEAP_PUT",
   ]),
   dte: z.number().int().positive().optional(),
   atr: z.number().positive().optional(),
@@ -121,6 +154,34 @@ export const researchIdeaSchema = z.object({
   roid: z.number().optional(),
   notes: z.string().max(5000).optional(),
   wheelCategoryOverride: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]).optional(),
+
+  // Strategy-specific typed fields
+  price: z.number().positive().optional(),
+  month: z.string().max(20).optional(),
+  shortStrike: z.number().positive().optional(),
+  shortDelta: z.number().min(-1).max(1).optional(),
+  longStrike: z.number().positive().optional(),
+  shortCallStrike: z.number().positive().optional(),
+  shortCallDelta: z.number().min(-1).max(1).optional(),
+  longCallStrike: z.number().positive().optional(),
+  shortPutStrike: z.number().positive().optional(),
+  shortPutDelta: z.number().min(-1).max(1).optional(),
+  longPutStrike: z.number().positive().optional(),
+  earningsDate: z.string().max(50).optional(),
+  expectedGap: z.number().optional(),
+  expiration: z.string().max(50).optional(),
+  spreadSubType: z.string().max(50).optional(),
+  longStrikeExp: z.string().max(50).optional(),
+  longStrikeDebit: z.number().positive().optional(),
+  shortStrikeExp: z.string().max(50).optional(),
+  shortStrikeCredit: z.number().positive().optional(),
+});
+
+// ─── Cash Deposit ──────────────────────────────────────────
+export const depositSchema = z.object({
+  amount: z.number().positive(),
+  occurredAt: z.string().datetime(),
+  notes: z.string().max(500).optional(),
 });
 
 // ─── CSV Import ─────────────────────────────────────────────

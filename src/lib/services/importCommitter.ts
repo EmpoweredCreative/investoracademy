@@ -131,6 +131,20 @@ export async function commitImport(
             },
             tx
           );
+
+          // Auto-classify as CORE in the wealth wheel if no classification exists yet
+          const existingClassification = await tx.wealthWheelClassification.findUnique({
+            where: { underlyingId: underlying.id },
+          });
+          if (!existingClassification) {
+            await tx.wealthWheelClassification.create({
+              data: {
+                accountId,
+                underlyingId: underlying.id,
+                category: "CORE",
+              },
+            });
+          }
         } else if (action === "SELL") {
           await consumeStockLots(
             {

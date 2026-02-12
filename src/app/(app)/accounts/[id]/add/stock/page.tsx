@@ -22,6 +22,7 @@ export default function StockEntryPage() {
   const [occurredAt, setOccurredAt] = useState(
     new Date().toISOString().slice(0, 16)
   );
+  const [wheelCategory, setWheelCategory] = useState("CORE");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -43,6 +44,7 @@ export default function StockEntryPage() {
           price: parseFloat(price),
           fees: parseFloat(fees || "0"),
           occurredAt: new Date(occurredAt).toISOString(),
+          wheelCategory,
           notes: notes || undefined,
         }),
       });
@@ -56,7 +58,8 @@ export default function StockEntryPage() {
 
       setSuccess(true);
       setTimeout(() => {
-        router.push(`/accounts/${accountId}`);
+        // Use window.location for a full page load so portfolio data is fresh
+        window.location.href = `/accounts/${accountId}`;
       }, 1500);
     } catch {
       setError("Something went wrong");
@@ -149,13 +152,26 @@ export default function StockEntryPage() {
             />
           </div>
 
-          <Input
-            label="Date & Time"
-            type="datetime-local"
-            value={occurredAt}
-            onChange={(e) => setOccurredAt(e.target.value)}
-            required
-          />
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="Date & Time"
+              type="datetime-local"
+              value={occurredAt}
+              onChange={(e) => setOccurredAt(e.target.value)}
+              required
+            />
+            <Select
+              label="Wheel Category"
+              value={wheelCategory}
+              onChange={(e) => setWheelCategory(e.target.value)}
+              options={[
+                { value: "CORE", label: "Core" },
+                { value: "MAD_MONEY", label: "Mad Money" },
+                { value: "FREE_CAPITAL", label: "Free Capital" },
+                { value: "RISK_MGMT", label: "Risk Management" },
+              ]}
+            />
+          </div>
 
           <Input
             label="Notes (optional)"

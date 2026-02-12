@@ -33,7 +33,7 @@ export default function DashboardPage() {
     fetch("/api/accounts")
       .then((r) => r.json())
       .then((data) => {
-        setAccounts(data);
+        setAccounts(Array.isArray(data) ? data : []);
         setLoading(false);
       })
       .catch(() => setLoading(false));

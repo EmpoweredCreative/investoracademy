@@ -54,9 +54,23 @@ export async function PATCH(
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
+    // Build update payload, converting types as needed for Prisma
+    const updateData: Record<string, unknown> = { ...data };
+
+    // Explicitly preserve null for defaultPolicy (clear account strategy)
+    if ("defaultPolicy" in data) {
+      updateData.defaultPolicy = data.defaultPolicy ?? null;
+    }
+
+    if (data.onboardingCompletedAt !== undefined) {
+      updateData.onboardingCompletedAt = data.onboardingCompletedAt
+        ? new Date(data.onboardingCompletedAt)
+        : null;
+    }
+
     const updated = await prisma.account.update({
       where: { id },
-      data,
+      data: updateData,
     });
 
     return NextResponse.json(updated);
@@ -78,9 +92,17 @@ export async function DELETE(
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
 
-    await prisma.account.delete({ where: { id } });
+    if (account.archivedAt) {
+      return NextResponse.json({ error: "Account is already archived" }, { status: 400 });
+    }
 
-    return NextResponse.json({ success: true });
+    // Soft-delete: set archivedAt instead of permanently deleting
+    const archived = await prisma.account.update({
+      where: { id },
+      data: { archivedAt: new Date() },
+    });
+
+    return NextResponse.json({ success: true, archivedAt: archived.archivedAt });
   } catch (error) {
     return handleApiError(error);
   }

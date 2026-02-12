@@ -60,12 +60,20 @@ interface WheelSlice {
 /**
  * Calculate the Wealth Wheel allocation for an account.
  * MVP uses COST BASIS only (no live pricing).
+ * Cash balance uses the manually-entered value on the Account,
+ * falling back to ledger-derived balance if not set.
  */
 export async function calculateWheel(accountId: string): Promise<{
   slices: WheelSlice[];
   totalValue: Prisma.Decimal;
   cashBalance: Prisma.Decimal;
+  cashflowReserve: Prisma.Decimal;
 }> {
+  // Get the account for manual cash fields
+  const account = await prisma.account.findUniqueOrThrow({
+    where: { id: accountId },
+  });
+
   // Get wheel targets
   const targets = await prisma.wealthWheelTarget.findMany({
     where: { accountId },
@@ -73,23 +81,62 @@ export async function calculateWheel(accountId: string): Promise<{
 
   const targetMap = new Map(targets.map((t) => [t.category, t.targetPct]));
 
-  // Calculate cash balance from ledger
-  const cashBalance = await calculateCashBalance(accountId);
+  // Use manually-entered cash balance; fall back to ledger-derived if zero
+  const manualCash = account.cashBalance ?? new Prisma.Decimal(0);
+  const cashBalance = manualCash.gt(0) ? manualCash : await calculateCashBalance(accountId);
+  const cashflowReserve = account.cashflowReserve ?? new Prisma.Decimal(0);
 
   // Calculate stock holdings by category
-  const classifications = await prisma.wealthWheelClassification.findMany({
-    where: { accountId },
-    include: { underlying: true },
-  });
+  // Fetch explicit classifications and journal trade overrides in parallel
+  const [classifications, journalTrades, lots] = await Promise.all([
+    prisma.wealthWheelClassification.findMany({
+      where: { accountId },
+    }),
+    prisma.journalTrade.findMany({
+      where: { accountId, wheelCategoryOverride: { not: null } },
+      select: { underlyingId: true, wheelCategoryOverride: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.stockLot.findMany({
+      where: { accountId, remaining: { not: 0 } },
+    }),
+  ]);
 
+  // Build category map: WealthWheelClassification is the primary source
   const classMap = new Map(
     classifications.map((c) => [c.underlyingId, c.category])
   );
 
-  // Get all open stock lots
-  const lots = await prisma.stockLot.findMany({
-    where: { accountId, remaining: { gt: 0 } },
-  });
+  // For underlyings without a classification, fall back to the most recent
+  // journal trade wheelCategoryOverride and auto-create the missing record
+  const missingClassifications: { underlyingId: string; category: WheelCategory }[] = [];
+  for (const trade of journalTrades) {
+    if (!classMap.has(trade.underlyingId) && trade.wheelCategoryOverride) {
+      classMap.set(trade.underlyingId, trade.wheelCategoryOverride);
+      missingClassifications.push({
+        underlyingId: trade.underlyingId,
+        category: trade.wheelCategoryOverride,
+      });
+    }
+  }
+
+  // Auto-heal: create missing WealthWheelClassification records so future
+  // calculations don't need the fallback
+  if (missingClassifications.length > 0) {
+    for (const missing of missingClassifications) {
+      await prisma.wealthWheelClassification.upsert({
+        where: { underlyingId: missing.underlyingId },
+        create: {
+          accountId,
+          underlyingId: missing.underlyingId,
+          category: missing.category,
+        },
+        update: {
+          category: missing.category,
+        },
+      });
+    }
+  }
 
   // Aggregate cost basis by wheel category
   const categoryTotals = new Map<WheelCategory, Prisma.Decimal>();
@@ -122,7 +169,7 @@ export async function calculateWheel(accountId: string): Promise<{
     return { category, currentValue, targetPct, actualPct, delta };
   });
 
-  return { slices, totalValue, cashBalance };
+  return { slices, totalValue, cashBalance, cashflowReserve };
 }
 
 /**
@@ -147,6 +194,7 @@ export async function calculateCashBalance(accountId: string): Promise<Prisma.De
         balance = balance.minus(entry.amount);
         break;
       case LedgerType.ADJUSTMENT:
+      case LedgerType.CASH_DEPOSIT:
         balance = balance.plus(entry.amount); // Can be positive or negative
         break;
     }

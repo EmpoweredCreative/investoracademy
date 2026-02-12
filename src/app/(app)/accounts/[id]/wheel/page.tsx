@@ -21,6 +21,7 @@ interface WheelData {
   slices: WheelSlice[];
   totalValue: string;
   cashBalance: string;
+  cashflowReserve: string;
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -249,16 +250,27 @@ export default function WealthWheelPage() {
         </div>
       </Card>
 
-      {/* Cash Balance */}
+      {/* Cash Balances */}
       <Card>
         <CardHeader>
-          <CardTitle>Cash Balance</CardTitle>
+          <CardTitle>Cash Balances</CardTitle>
         </CardHeader>
-        <p className="text-3xl font-bold">
-          ${parseFloat(wheel.cashBalance).toLocaleString()}
-        </p>
-        <p className="text-sm text-muted mt-1">
-          Derived from ledger entries (credits - debits - fees)
+        <div className="grid grid-cols-2 gap-6">
+          <div>
+            <p className="text-3xl font-bold text-success">
+              ${parseFloat(wheel.cashBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </p>
+            <p className="text-sm text-muted mt-1">Free Cash</p>
+          </div>
+          <div>
+            <p className="text-3xl font-bold">
+              ${parseFloat(wheel.cashflowReserve).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </p>
+            <p className="text-sm text-muted mt-1">Cashflow Reserve</p>
+          </div>
+        </div>
+        <p className="text-xs text-muted mt-4">
+          Manage cash balances from the account detail page.
         </p>
       </Card>
     </div>
