@@ -682,7 +682,7 @@ function SymbolRow({
                         {s.optionTrades.map((ot) => (
                           <tr key={ot.id} className="border-b border-border/20 hover:bg-card-hover/50">
                             <td className="py-1.5 px-2">
-                              <Badge variant={ot.callPut === "CALL" ? "warning" : "info"}>
+                              <Badge variant={ot.callPut === "CALL" ? "warning" : "core"}>
                                 {ot.callPut}
                               </Badge>
                             </td>
