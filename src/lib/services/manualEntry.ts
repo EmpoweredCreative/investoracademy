@@ -22,6 +22,7 @@ interface OptionLegInput {
   strike: number;
   quantity: number;
   price: number;
+  entryDelta?: number;
 }
 
 interface OptionEntryInput {
@@ -256,14 +257,15 @@ export async function processOptionEntry(input: OptionEntryInput) {
       },
     });
 
-    // Fee entry
-    if (input.fees > 0) {
+    // Fee entry (cost of trade — always create when fees > 0 so Journal/P/L include them)
+    const feesAmount = input.fees ?? 0;
+    if (feesAmount > 0) {
       await tx.ledgerEntry.create({
         data: {
           accountId: input.accountId,
           strategyInstanceId: instanceId,
           type: LedgerType.FEE,
-          amount: new Prisma.Decimal(input.fees),
+          amount: new Prisma.Decimal(feesAmount),
           occurredAt: input.occurredAt,
           description: `Fee for ${input.action} ${input.symbol}`,
         },
@@ -271,7 +273,7 @@ export async function processOptionEntry(input: OptionEntryInput) {
     }
 
     // Auto-adjust cash balance for the primary leg (only when onboarding is complete)
-    const feesDecimal = new Prisma.Decimal(input.fees);
+    const feesDecimal = new Prisma.Decimal(feesAmount);
     if (input.action === "STO" || input.action === "STC") {
       // Selling option: receive premium minus fees
       await adjustCashBalance(tx, input.accountId, totalAmount.minus(feesDecimal));
@@ -358,7 +360,7 @@ export async function processOptionEntry(input: OptionEntryInput) {
           },
         });
 
-        // Auto-create a journal trade for this leg
+        // Auto-create a journal trade for this leg (use user's notes for all legs, include delta)
         await tx.journalTrade.create({
           data: {
             accountId: input.accountId,
@@ -369,9 +371,10 @@ export async function processOptionEntry(input: OptionEntryInput) {
             longShort: leg.action === "STO" ? "SHORT" : "LONG",
             quantity: leg.quantity,
             entryPrice: leg.price,
+            entryDelta: leg.entryDelta != null ? new Prisma.Decimal(leg.entryDelta) : null,
             entryDateTime: input.occurredAt,
             wheelCategoryOverride: input.wheelCategoryOverride || null,
-            thesisNotes: `${leg.action} ${leg.quantity}x ${input.symbol} $${leg.strike} ${leg.callPut} @ $${leg.price}`,
+            thesisNotes: input.notes ?? `${leg.action} ${leg.quantity}x ${input.symbol} $${leg.strike} ${leg.callPut} @ $${leg.price}`,
           },
         });
 

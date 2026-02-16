@@ -44,7 +44,28 @@ interface JournalTrade {
   wheelCategoryOverride: string | null;
   effectiveWheelCategory: string;
   underlying: { symbol: string };
+  fees?: number;
+  premiumReceived?: number;
+  premiumPaid?: number;
+  nrop?: number | null;
+  strategyGroupId?: string | null;
+  strategyType?: string | null;
 }
+
+const STRATEGY_TYPE_LABELS: Record<string, string> = {
+  BULL_PUT_SPREAD: "Bull Put Spread",
+  BEAR_CALL_SPREAD: "Bear Call Spread",
+  BULL_CALL_SPREAD: "Bull Call Spread",
+  BEAR_PUT_SPREAD: "Bear Put Spread",
+  IRON_CONDOR: "Iron Condor",
+  IRON_BUTTERFLY: "Iron Butterfly",
+  SHORT_STRANGLE: "Short Strangle",
+  TIME_SPREAD: "Time Spread",
+  COVERED_CALL: "Covered Call",
+  SHORT_PUT: "Short Put",
+  LEAP_CALL: "LEAP Call",
+  LEAP_PUT: "LEAP Put",
+};
 
 interface UnderlyingOption {
   id: string;
@@ -87,12 +108,37 @@ interface InsightsData {
   byType: TradeTypeInsight[];
 }
 
-type JournalEntryType = "LONG_STOCK" | "COVERED_CALL" | "SHORT_PUT";
+interface StrategyInsightRow {
+  strategyType: string;
+  label: string;
+  totalTrades: number;
+  closedTrades: number;
+  openTrades: number;
+  winners: number;
+  losers: number;
+  winRate: number;
+  totalPnl: number;
+  avgPnl: number;
+}
+
+interface StrategyInsightsData {
+  summary: {
+    totalStrategies: number;
+    totalClosed: number;
+    totalPnl: number;
+    avgPnl: number;
+  };
+  byStrategy: StrategyInsightRow[];
+}
+
+type JournalEntryType = "LONG_STOCK" | "COVERED_CALL" | "SHORT_PUT" | "LONG_PUT" | "LONG_CALL";
 
 const ENTRY_TYPE_OPTIONS: { value: JournalEntryType; label: string }[] = [
   { value: "LONG_STOCK", label: "Bought long stock" },
   { value: "COVERED_CALL", label: "Sold covered call" },
   { value: "SHORT_PUT", label: "Sold put" },
+  { value: "LONG_PUT", label: "Bought long put" },
+  { value: "LONG_CALL", label: "Bought long call" },
 ];
 
 function toLocalDatetime(iso: string | null | undefined): string {
@@ -105,6 +151,8 @@ function toLocalDatetime(iso: string | null | undefined): string {
 function deriveEntryType(trade: JournalTrade): JournalEntryType {
   if (trade.longShort === "SHORT" && trade.callPut === "CALL") return "COVERED_CALL";
   if (trade.longShort === "SHORT" && trade.callPut === "PUT") return "SHORT_PUT";
+  if (trade.longShort === "LONG" && trade.callPut === "PUT") return "LONG_PUT";
+  if (trade.longShort === "LONG" && trade.callPut === "CALL") return "LONG_CALL";
   return "LONG_STOCK";
 }
 
@@ -121,6 +169,9 @@ export default function JournalPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
 
+  // Expanded strategy group (multi-leg) in journal list
+  const [expandedJournalGroupId, setExpandedJournalGroupId] = useState<string | null>(null);
+
   // Delete confirmation state
   const [deleteTarget, setDeleteTarget] = useState<JournalTrade | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -129,6 +180,9 @@ export default function JournalPage() {
   const [showInsights, setShowInsights] = useState(false);
   const [insights, setInsights] = useState<InsightsData | null>(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [showStrategyInsights, setShowStrategyInsights] = useState(false);
+  const [strategyInsights, setStrategyInsights] = useState<StrategyInsightsData | null>(null);
+  const [strategyInsightsLoading, setStrategyInsightsLoading] = useState(false);
   const [form, setForm] = useState({
     entryType: "LONG_STOCK" as JournalEntryType,
     underlyingId: "",
@@ -176,6 +230,24 @@ export default function JournalPage() {
       fetchInsights();
     }
     setShowInsights((prev) => !prev);
+  };
+
+  const fetchStrategyInsights = () => {
+    setStrategyInsightsLoading(true);
+    fetch(`/api/accounts/${accountId}/journal/insights/strategies`)
+      .then((r) => r.json())
+      .then((data) => {
+        setStrategyInsights(data);
+        setStrategyInsightsLoading(false);
+      })
+      .catch(() => setStrategyInsightsLoading(false));
+  };
+
+  const toggleStrategyInsights = () => {
+    if (!showStrategyInsights && !strategyInsights) {
+      fetchStrategyInsights();
+    }
+    setShowStrategyInsights((prev) => !prev);
   };
 
   const fetchUnderlyings = () => {
@@ -241,7 +313,7 @@ export default function JournalPage() {
       stopPrice: trade.stopPrice ? parseFloat(trade.stopPrice).toString() : "",
       exitPrice: trade.exitPrice ? parseFloat(trade.exitPrice).toString() : "",
       exitDateTime: toLocalDatetime(trade.exitDateTime),
-      fees: "", // fees live in LedgerEntry, not JournalTrade; edit would need ledger lookup
+      fees: trade.fees != null && trade.fees > 0 ? trade.fees.toString() : "",
       thesisNotes: trade.thesisNotes ?? "",
       outcomeRating: (trade.outcomeRating as typeof form.outcomeRating) ?? "NEUTRAL",
     });
@@ -263,12 +335,20 @@ export default function JournalPage() {
       if (form.entryType === "LONG_STOCK") {
         body.longShort = "LONG";
       } else {
-        body.longShort = "SHORT";
-        body.callPut = form.entryType === "COVERED_CALL" ? "CALL" : "PUT";
+        body.longShort = form.entryType === "COVERED_CALL" || form.entryType === "SHORT_PUT" ? "SHORT" : "LONG";
+        body.callPut = form.entryType === "COVERED_CALL" || form.entryType === "LONG_CALL" ? "CALL" : "PUT";
         if (form.strike) body.strike = parseFloat(form.strike);
         if (form.entryDelta) body.entryDelta = parseFloat(form.entryDelta);
         else if (isEdit) body.entryDelta = null;
-        if (form.fees) body.fees = parseFloat(form.fees);
+        const isOption =
+          form.entryType === "COVERED_CALL" ||
+          form.entryType === "SHORT_PUT" ||
+          form.entryType === "LONG_PUT" ||
+          form.entryType === "LONG_CALL";
+        if (isOption) {
+          const feesNum = parseFloat(String(form.fees || "0").trim());
+          body.fees = Number.isNaN(feesNum) ? 0 : feesNum;
+        }
       }
       if (form.quantity) body.quantity = parseInt(form.quantity, 10);
       if (form.entryPrice) body.entryPrice = parseFloat(form.entryPrice);
@@ -342,14 +422,16 @@ export default function JournalPage() {
 
   // ── Metrics ────────────────────────────────────────────────
 
-  const winners = trades.filter(
-    (t) =>
-      t.entryPrice &&
-      t.exitPrice &&
-      (t.longShort === "SHORT"
-        ? parseFloat(t.exitPrice) < parseFloat(t.entryPrice)
-        : parseFloat(t.exitPrice) > parseFloat(t.entryPrice))
-  );
+  const winners = trades.filter((t) => {
+    if (!t.entryPrice || !t.exitPrice) return false;
+    // Option trades: use nrop when available (includes fees)
+    if (t.callPut && t.nrop != null) return t.nrop > 0;
+    // Stock/simple: premium diff
+    const isShort = t.longShort === "SHORT";
+    return isShort
+      ? parseFloat(t.exitPrice) < parseFloat(t.entryPrice)
+      : parseFloat(t.exitPrice) > parseFloat(t.entryPrice);
+  });
   const winRate = trades.length > 0 ? (winners.length / trades.length) * 100 : 0;
 
   // ── Modal title ────────────────────────────────────────────
@@ -426,7 +508,10 @@ export default function JournalPage() {
                 ]}
                 required
               />
-              {(form.entryType === "COVERED_CALL" || form.entryType === "SHORT_PUT") && (
+              {(form.entryType === "COVERED_CALL" ||
+                form.entryType === "SHORT_PUT" ||
+                form.entryType === "LONG_PUT" ||
+                form.entryType === "LONG_CALL") && (
                 <div className="grid grid-cols-2 gap-4">
                   <Input
                     label="Strike"
@@ -506,7 +591,10 @@ export default function JournalPage() {
                   onChange={(e) => setForm((f) => ({ ...f, exitDateTime: e.target.value }))}
                 />
               </div>
-              {(form.entryType === "COVERED_CALL" || form.entryType === "SHORT_PUT") && (
+              {(form.entryType === "COVERED_CALL" ||
+                form.entryType === "SHORT_PUT" ||
+                form.entryType === "LONG_PUT" ||
+                form.entryType === "LONG_CALL") && (
                 <Input
                   label="Total fees"
                   type="number"
@@ -741,6 +829,132 @@ export default function JournalPage() {
         )}
       </Card>
 
+      {/* Option Performance by Strategy */}
+      <Card>
+        <button
+          type="button"
+          onClick={toggleStrategyInsights}
+          className="w-full flex items-center justify-between p-0"
+        >
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-accent" />
+            <span className="font-semibold">Option Performance by Strategy</span>
+          </div>
+          {showStrategyInsights ? (
+            <ChevronDown className="w-5 h-5 text-muted" />
+          ) : (
+            <ChevronRight className="w-5 h-5 text-muted" />
+          )}
+        </button>
+
+        {showStrategyInsights && (
+          <div className="mt-4 space-y-6">
+            {strategyInsightsLoading ? (
+              <div className="animate-pulse space-y-3">
+                <div className="h-8 bg-card rounded" />
+                <div className="h-32 bg-card rounded" />
+              </div>
+            ) : !strategyInsights || strategyInsights.summary.totalStrategies === 0 ? (
+              <p className="text-muted text-sm py-4">
+                No option trades recorded yet. Add option trades (single-leg or multi-leg strategies) to see performance by strategy here.
+              </p>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-lg bg-background p-3">
+                    <p className="text-lg font-bold">{strategyInsights.summary.totalStrategies}</p>
+                    <p className="text-xs text-muted">Total Strategies</p>
+                  </div>
+                  <div className="rounded-lg bg-background p-3">
+                    <p className={`text-lg font-bold ${strategyInsights.summary.totalPnl >= 0 ? "text-success" : "text-danger"}`}>
+                      {strategyInsights.summary.totalPnl >= 0 ? "+" : "-"}$
+                      {Math.abs(strategyInsights.summary.totalPnl).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                    <p className="text-xs text-muted">Total P/L</p>
+                  </div>
+                  <div className="rounded-lg bg-background p-3">
+                    <p className={`text-lg font-bold ${strategyInsights.summary.avgPnl >= 0 ? "text-success" : "text-danger"}`}>
+                      {strategyInsights.summary.avgPnl >= 0 ? "+" : "-"}$
+                      {Math.abs(strategyInsights.summary.avgPnl).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                    <p className="text-xs text-muted">Avg P/L per Closed</p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-xs text-muted">
+                        <th className="py-2 px-3 text-left font-medium">Strategy</th>
+                        <th className="py-2 px-3 text-right font-medium">Trades</th>
+                        <th className="py-2 px-3 text-right font-medium">Closed</th>
+                        <th className="py-2 px-3 text-right font-medium">Win Rate</th>
+                        <th className="py-2 px-3 text-right font-medium">Avg P/L</th>
+                        <th className="py-2 px-3 text-right font-medium">Total P/L</th>
+                        <th className="py-2 px-3 text-right font-medium">W / L</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {strategyInsights.byStrategy.map((row) => (
+                        <tr
+                          key={row.strategyType}
+                          className="border-b border-border/50 hover:bg-card-hover transition-colors"
+                        >
+                          <td className="py-2 px-3 font-medium">{row.label}</td>
+                          <td className="py-2 px-3 text-right">
+                            {row.totalTrades}
+                            {row.openTrades > 0 && (
+                              <span className="text-muted text-xs ml-1">
+                                ({row.openTrades} open)
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-right">{row.closedTrades}</td>
+                          <td className="py-2 px-3 text-right">
+                            {row.closedTrades > 0 ? (
+                              <span className={row.winRate >= 50 ? "text-success" : "text-danger"}>
+                                {row.winRate}%
+                              </span>
+                            ) : (
+                              <span className="text-muted">—</span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-right">
+                            {row.closedTrades > 0 ? (
+                              <span className={row.avgPnl >= 0 ? "text-success" : "text-danger"}>
+                                {row.avgPnl >= 0 ? "+" : "-"}$
+                                {Math.abs(row.avgPnl).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            ) : (
+                              <span className="text-muted">—</span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-right">
+                            {row.closedTrades > 0 ? (
+                              <span className={row.totalPnl >= 0 ? "text-success font-medium" : "text-danger font-medium"}>
+                                {row.totalPnl >= 0 ? "+" : "-"}$
+                                {Math.abs(row.totalPnl).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            ) : (
+                              <span className="text-muted">—</span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-right text-xs">
+                            <span className="text-success">{row.winners}W</span>
+                            {" / "}
+                            <span className="text-danger">{row.losers}L</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Card>
+
       {/* Tabs + Trades */}
       <Tabs tabs={tabs} onChange={handleTabChange}>
         {() =>
@@ -754,166 +968,259 @@ export default function JournalPage() {
             <Card className="text-center py-8">
               <p className="text-muted">No journal entries in this category.</p>
             </Card>
-          ) : (
-            <div className="space-y-3">
-              {trades.map((trade) => {
-                const isShort = trade.longShort === "SHORT";
-                const qty = trade.quantity ? parseFloat(trade.quantity) : 1;
-                const entry = trade.entryPrice ? parseFloat(trade.entryPrice) : null;
-                const exit = trade.exitPrice ? parseFloat(trade.exitPrice) : null;
-                const target = trade.targetPrice ? parseFloat(trade.targetPrice) : null;
-                const stop = trade.stopPrice ? parseFloat(trade.stopPrice) : null;
+          ) : (() => {
+            type DisplayItem =
+              | { type: "single"; trade: JournalTrade }
+              | { type: "group"; strategyGroupId: string; strategyType: string; trades: JournalTrade[] };
+            const groupMap = new Map<string, JournalTrade[]>();
+            const singles: JournalTrade[] = [];
+            for (const t of trades) {
+              const gid = t.strategyGroupId;
+              if (gid) {
+                if (!groupMap.has(gid)) groupMap.set(gid, []);
+                groupMap.get(gid)!.push(t);
+              } else {
+                singles.push(t);
+              }
+            }
+            const displayList: DisplayItem[] = [
+              ...Array.from(groupMap.entries()).map(([strategyGroupId, groupTrades]) => ({
+                type: "group" as const,
+                strategyGroupId,
+                strategyType: groupTrades[0]?.strategyType ?? "MULTI_LEG",
+                trades: groupTrades.sort(
+                  (a, b) =>
+                    new Date(b.entryDateTime ?? 0).getTime() - new Date(a.entryDateTime ?? 0).getTime()
+                ),
+              })),
+              ...singles.map((trade) => ({ type: "single" as const, trade })),
+            ];
+            displayList.sort((a, b) => {
+              const dateA = a.type === "group" ? a.trades[0]?.entryDateTime : a.trade.entryDateTime;
+              const dateB = b.type === "group" ? b.trades[0]?.entryDateTime : b.trade.entryDateTime;
+              return new Date(dateB ?? 0).getTime() - new Date(dateA ?? 0).getTime();
+            });
 
-                // Actual P/L (closed trade)
-                const pnl =
-                  entry !== null && exit !== null
-                    ? (isShort ? -(exit - entry) : exit - entry) * qty
-                    : null;
-                const isProfit = pnl !== null && pnl > 0;
+            const fmtDollars = (v: number) =>
+              Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-                // Potential profit (based on target)
-                const potentialProfit =
-                  entry !== null && target !== null
-                    ? (isShort ? -(target - entry) : target - entry) * qty
-                    : null;
+            const renderTradeCard = (trade: JournalTrade) => {
+              const isShort = trade.longShort === "SHORT";
+              const isOption = !!trade.callPut;
+              const qty = trade.quantity ? parseFloat(trade.quantity) : 1;
+              const entry = trade.entryPrice ? parseFloat(trade.entryPrice) : null;
+              const exit = trade.exitPrice ? parseFloat(trade.exitPrice) : null;
+              const target = trade.targetPrice ? parseFloat(trade.targetPrice) : null;
+              const stop = trade.stopPrice ? parseFloat(trade.stopPrice) : null;
+              let pnl: number | null = null;
+              if (isOption && trade.nrop != null) {
+                pnl = trade.nrop;
+              } else if (entry !== null && exit !== null) {
+                if (isOption) {
+                  const premiumPnl = (isShort ? entry - exit : exit - entry) * qty * 100;
+                  const fees = trade.fees ?? 0;
+                  pnl = premiumPnl - fees;
+                } else {
+                  pnl = (isShort ? -(exit - entry) : exit - entry) * qty;
+                }
+              }
+              const isProfit = pnl !== null && pnl > 0;
+              const potentialProfit =
+                entry !== null && target !== null
+                  ? (isShort ? -(target - entry) : target - entry) * qty
+                  : null;
+              const maxRisk =
+                entry !== null && stop !== null
+                  ? (isShort ? stop - entry : entry - stop) * qty
+                  : null;
 
-                // Max risk (based on stop loss)
-                const maxRisk =
-                  entry !== null && stop !== null
-                    ? (isShort ? stop - entry : entry - stop) * qty
-                    : null;
-
-                const fmtDollars = (v: number) =>
-                  Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-                return (
-                  <Card key={trade.id} className="!p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-1.5 flex-1 min-w-0">
-                        {/* Row 1: Symbol, strike, badges */}
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-semibold">{trade.underlying.symbol}</span>
-                          {trade.strike && (
-                            <span className="text-muted text-sm">
-                              ${parseFloat(trade.strike).toFixed(2)} {trade.callPut}
-                            </span>
-                          )}
-                          {trade.longShort && (
-                            <Badge variant={trade.longShort === "SHORT" ? "warning" : "core"}>
-                              {trade.longShort}
-                            </Badge>
-                          )}
-                          <Badge variant={wheelCategoryBadgeVariant(trade.effectiveWheelCategory)}>
-                            {trade.effectiveWheelCategory.split("_").join(" ")}
+              return (
+                <Card key={trade.id} className="!p-4">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1.5 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold">{trade.underlying.symbol}</span>
+                        {trade.strike && (
+                          <span className="text-muted text-sm">
+                            ${parseFloat(trade.strike).toFixed(2)} {trade.callPut}
+                          </span>
+                        )}
+                        {trade.longShort && (
+                          <Badge variant={trade.longShort === "SHORT" ? "warning" : "core"}>
+                            {trade.longShort}
                           </Badge>
-                          {trade.outcomeRating && (
-                            <Badge
-                              variant={
-                                trade.outcomeRating === "EXCELLENT" || trade.outcomeRating === "GOOD"
-                                  ? "success"
-                                  : trade.outcomeRating === "POOR" || trade.outcomeRating === "TERRIBLE"
-                                  ? "danger"
-                                  : "default"
-                              }
-                            >
-                              {trade.outcomeRating}
-                            </Badge>
-                          )}
-                        </div>
-
-                        {/* Row 2: Thesis notes */}
-                        {trade.thesisNotes && (
-                          <p className="text-sm text-muted line-clamp-2">{trade.thesisNotes}</p>
                         )}
-
-                        {/* Row 3: Price details */}
-                        <div className="flex items-center gap-4 text-xs text-muted flex-wrap">
-                          {entry !== null && <span>Entry: ${entry.toFixed(2)}</span>}
-                          {trade.entryDelta && (
-                            <span>Delta: {parseFloat(trade.entryDelta).toFixed(2)}</span>
-                          )}
-                          {target !== null && (
-                            <span className="flex items-center gap-1">
+                        <Badge variant={wheelCategoryBadgeVariant(trade.effectiveWheelCategory)}>
+                          {trade.effectiveWheelCategory.split("_").join(" ")}
+                        </Badge>
+                        {trade.outcomeRating && (
+                          <Badge
+                            variant={
+                              trade.outcomeRating === "EXCELLENT" || trade.outcomeRating === "GOOD"
+                                ? "success"
+                                : trade.outcomeRating === "POOR" || trade.outcomeRating === "TERRIBLE"
+                                ? "danger"
+                                : "default"
+                            }
+                          >
+                            {trade.outcomeRating}
+                          </Badge>
+                        )}
+                      </div>
+                      {trade.thesisNotes && (
+                        <p className="text-sm text-muted line-clamp-2">{trade.thesisNotes}</p>
+                      )}
+                      <div className="flex items-center gap-4 text-xs text-muted flex-wrap">
+                        {entry !== null && <span>Entry: ${entry.toFixed(2)}</span>}
+                        {trade.entryDelta && (
+                          <span>Delta: {parseFloat(trade.entryDelta).toFixed(2)}</span>
+                        )}
+                        {target !== null && (
+                          <span className="flex items-center gap-1">
+                            <Target className="w-3 h-3" />
+                            Target: ${target.toFixed(2)}
+                          </span>
+                        )}
+                        {stop !== null && (
+                          <span className="flex items-center gap-1">
+                            <ShieldAlert className="w-3 h-3" />
+                            Stop: ${stop.toFixed(2)}
+                          </span>
+                        )}
+                        {exit !== null && <span>Exit: ${exit.toFixed(2)}</span>}
+                        {trade.fees != null && trade.fees > 0 && (
+                          <span>Fees: ${trade.fees.toFixed(2)}</span>
+                        )}
+                        {trade.quantity && <span>Qty: {parseFloat(trade.quantity)}</span>}
+                        {trade.entryDateTime && (
+                          <span>{new Date(trade.entryDateTime).toLocaleDateString()}</span>
+                        )}
+                      </div>
+                      {(potentialProfit !== null || maxRisk !== null) && pnl === null && (
+                        <div className="flex items-center gap-4 text-xs flex-wrap">
+                          {potentialProfit !== null && (
+                            <span className="text-success flex items-center gap-1">
                               <Target className="w-3 h-3" />
-                              Target: ${target.toFixed(2)}
+                              Potential profit: +${fmtDollars(potentialProfit)}
                             </span>
                           )}
-                          {stop !== null && (
-                            <span className="flex items-center gap-1">
+                          {maxRisk !== null && (
+                            <span className="text-danger flex items-center gap-1">
                               <ShieldAlert className="w-3 h-3" />
-                              Stop: ${stop.toFixed(2)}
+                              Max risk: -${fmtDollars(maxRisk)}
                             </span>
-                          )}
-                          {exit !== null && <span>Exit: ${exit.toFixed(2)}</span>}
-                          {trade.quantity && <span>Qty: {parseFloat(trade.quantity)}</span>}
-                          {trade.entryDateTime && (
-                            <span>{new Date(trade.entryDateTime).toLocaleDateString()}</span>
                           )}
                         </div>
-
-                        {/* Row 4: Potential profit / Max risk (for open trades) */}
-                        {(potentialProfit !== null || maxRisk !== null) && pnl === null && (
-                          <div className="flex items-center gap-4 text-xs flex-wrap">
-                            {potentialProfit !== null && (
-                              <span className="text-success flex items-center gap-1">
-                                <Target className="w-3 h-3" />
-                                Potential profit: +${fmtDollars(potentialProfit)}
-                              </span>
-                            )}
-                            {maxRisk !== null && (
-                              <span className="text-danger flex items-center gap-1">
-                                <ShieldAlert className="w-3 h-3" />
-                                Max risk: -${fmtDollars(maxRisk)}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Right side: P/L + actions */}
-                      <div className="flex items-center gap-2 ml-3 shrink-0">
-                        {pnl !== null ? (
-                          <div className={`flex flex-col items-end text-right ${isProfit ? "text-success" : "text-danger"}`}>
-                            <div className="flex items-center gap-1 font-semibold text-sm">
-                              {isProfit ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                              {isProfit ? "+" : "-"}${fmtDollars(pnl)}
-                            </div>
-                            <span className="text-[10px] font-medium opacity-75">
-                              {isProfit ? "PROFIT" : "LOSS"}
-                            </span>
-                          </div>
-                        ) : potentialProfit !== null ? (
-                          <div className="flex flex-col items-end text-right text-muted">
-                            <div className="flex items-center gap-1 font-medium text-xs">
-                              <Target className="w-3.5 h-3.5" />
-                              +${fmtDollars(potentialProfit)}
-                            </div>
-                            <span className="text-[10px] opacity-75">POTENTIAL</span>
-                          </div>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(trade)}
-                          className="p-1.5 rounded-lg text-muted hover:text-foreground hover:bg-card-hover transition-colors"
-                          aria-label="Edit entry"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(trade)}
-                          className="p-1.5 rounded-lg text-muted hover:text-danger hover:bg-card-hover transition-colors"
-                          aria-label="Delete entry"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                      )}
                     </div>
-                  </Card>
-                );
-              })}
-            </div>
-          )
+                    <div className="flex items-center gap-2 ml-3 shrink-0">
+                      {pnl !== null ? (
+                        <div className={`flex flex-col items-end text-right ${isProfit ? "text-success" : "text-danger"}`}>
+                          <div className="flex items-center gap-1 font-semibold text-sm">
+                            {isProfit ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                            {isProfit ? "+" : "-"}${fmtDollars(pnl)}
+                          </div>
+                          <span className="text-[10px] font-medium opacity-75">
+                            {isProfit ? "PROFIT" : "LOSS"}
+                          </span>
+                        </div>
+                      ) : potentialProfit !== null ? (
+                        <div className="flex flex-col items-end text-right text-muted">
+                          <div className="flex items-center gap-1 font-medium text-xs">
+                            <Target className="w-3.5 h-3.5" />
+                            +${fmtDollars(potentialProfit)}
+                          </div>
+                          <span className="text-[10px] opacity-75">POTENTIAL</span>
+                        </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => openEditModal(trade)}
+                        className="p-1.5 rounded-lg text-muted hover:text-foreground hover:bg-card-hover transition-colors"
+                        aria-label="Edit entry"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteTarget(trade)}
+                        className="p-1.5 rounded-lg text-muted hover:text-danger hover:bg-card-hover transition-colors"
+                        aria-label="Delete entry"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </Card>
+              );
+            };
+
+            return (
+              <div className="space-y-3">
+                {displayList.map((item) => {
+                  if (item.type === "single") {
+                    return renderTradeCard(item.trade);
+                  }
+                  const label = STRATEGY_TYPE_LABELS[item.strategyType] ?? item.strategyType;
+                  const symbol = item.trades[0]?.underlying.symbol ?? "";
+                  const netCredit = item.trades.reduce(
+                    (s, t) =>
+                      s +
+                      (t.nrop ??
+                        ((t.premiumReceived ?? 0) - (t.premiumPaid ?? 0) - (t.fees ?? 0))),
+                    0
+                  );
+                  const isGroupExpanded = expandedJournalGroupId === item.strategyGroupId;
+                  return (
+                    <Card key={item.strategyGroupId} className="!p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedJournalGroupId(isGroupExpanded ? null : item.strategyGroupId)
+                            }
+                            className="p-0.5 rounded text-muted hover:text-foreground"
+                          >
+                            {isGroupExpanded ? (
+                              <ChevronDown className="w-4 h-4" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4" />
+                            )}
+                          </button>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold">{symbol}</span>
+                            <Badge variant="core">{label}</Badge>
+                            {item.trades[0]?.effectiveWheelCategory && (
+                              <Badge variant={wheelCategoryBadgeVariant(item.trades[0].effectiveWheelCategory)}>
+                                {item.trades[0].effectiveWheelCategory.split("_").join(" ")}
+                              </Badge>
+                            )}
+                            {item.trades[0]?.entryDateTime && (
+                              <span className="text-xs text-muted">
+                                {new Date(item.trades[0].entryDateTime).toLocaleDateString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end text-right">
+                          <span className={netCredit >= 0 ? "text-success font-semibold" : "text-danger font-semibold"}>
+                            {netCredit >= 0 ? "+" : ""}${fmtDollars(netCredit)}
+                          </span>
+                          <span className="text-[10px] text-muted">Net credit</span>
+                        </div>
+                      </div>
+                      {isGroupExpanded && (
+                        <div className="mt-4 pl-6 space-y-3 border-l-2 border-border">
+                          {item.trades.map((leg) => renderTradeCard(leg))}
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
+              </div>
+            );
+          })()
         }
       </Tabs>
     </div>

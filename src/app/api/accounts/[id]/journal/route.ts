@@ -40,23 +40,49 @@ export async function GET(
             wheelClassification: true,
           },
         },
-        strategyInstance: true,
+        strategyInstance: {
+          include: { ledgerEntries: true },
+        },
       },
       orderBy: { createdAt: "desc" },
     });
 
-    // Resolve effective wheel category for each trade:
-    // 1. wheelCategoryOverride on the JournalTrade
-    // 2. underlying's WealthWheelClassification
-    // 3. default MAD_MONEY
+    // Resolve effective wheel category + compute fees/nrop from ledger for option trades
     const tradesWithCategory = trades.map((trade) => {
       const effectiveCategory =
         trade.wheelCategoryOverride ??
         trade.underlying.wheelClassification?.category ??
         "MAD_MONEY";
+
+      let fees = 0;
+      let premiumReceived = 0;
+      let premiumPaid = 0;
+      let nrop: number | null = null;
+
+      if (trade.strategyInstance?.ledgerEntries) {
+        for (const entry of trade.strategyInstance.ledgerEntries) {
+          const amt = parseFloat(entry.amount.toString());
+          if (entry.type === "PREMIUM_CREDIT") premiumReceived += amt;
+          else if (entry.type === "PREMIUM_DEBIT") premiumPaid += amt;
+          else if (entry.type === "FEE") fees += amt;
+        }
+        if (trade.strategyInstance.status === "FINALIZED" && trade.strategyInstance.realizedOptionProfit != null) {
+          nrop = parseFloat(trade.strategyInstance.realizedOptionProfit.toString());
+        } else if (trade.exitPrice != null) {
+          // Open instance with exit in journal: compute nrop from ledger
+          nrop = premiumReceived - premiumPaid - fees;
+        }
+      }
+
       return {
         ...trade,
         effectiveWheelCategory: effectiveCategory,
+        fees: parseFloat(fees.toFixed(2)),
+        premiumReceived: parseFloat(premiumReceived.toFixed(2)),
+        premiumPaid: parseFloat(premiumPaid.toFixed(2)),
+        nrop: nrop !== null ? parseFloat(nrop.toFixed(2)) : null,
+        strategyGroupId: trade.strategyInstance?.strategyGroupId ?? null,
+        strategyType: trade.strategyInstance?.strategyType ?? null,
       };
     });
 
@@ -97,7 +123,12 @@ export async function POST(
 
       // For short option trades (covered calls / short puts), create financial records
       if (data.callPut && data.longShort === "SHORT") {
-        await createOptionFinancials(tx, accountId, journalTrade.id, { ...data, fees });
+        await createOptionFinancials(tx, accountId, journalTrade.id, {
+          ...data,
+          callPut: data.callPut,
+          longShort: data.longShort,
+          fees,
+        });
       }
 
       return journalTrade;
@@ -144,6 +175,7 @@ export async function PATCH(
       const updateData: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(data)) {
         if (value === undefined) continue; // field not sent — skip
+        if (key === "fees") continue; // fees live in LedgerEntry, not JournalTrade
         if (key === "strike") {
           updateData[key] = value; // null clears, number sets
         } else if (key === "entryDateTime" || key === "exitDateTime") {
@@ -158,12 +190,102 @@ export async function PATCH(
         data: updateData,
       });
 
+      // When symbol (underlying) is changed, move the strategy instance to the new underlying
+      // so the portfolio snapshot and statement show the option under the correct stock.
+      const newUnderlyingId = data.underlyingId ?? existing.underlyingId;
+      if (
+        data.underlyingId !== undefined &&
+        data.underlyingId !== existing.underlyingId &&
+        existing.strategyInstanceId
+      ) {
+        await tx.strategyInstance.update({
+          where: { id: existing.strategyInstanceId },
+          data: { underlyingId: newUnderlyingId },
+        });
+      }
+
       // Resolve the effective callPut and longShort (from update, existing record, or strategy instance)
       let effectiveCallPut = data.callPut === null ? null : (data.callPut ?? existing.callPut);
       let effectiveLongShort = data.longShort ?? existing.longShort;
       if (existing.strategyInstance) {
         if (!effectiveCallPut) effectiveCallPut = existing.strategyInstance.callPut;
         if (!effectiveLongShort) effectiveLongShort = existing.strategyInstance.longShort;
+      }
+
+      // When option type (e.g. short put → covered call) is changed in the journal, sync the
+      // strategy instance so the portfolio snapshot shows the correct type.
+      if (
+        existing.strategyInstanceId &&
+        effectiveCallPut &&
+        existing.strategyInstance &&
+        existing.strategyInstance.callPut !== effectiveCallPut
+      ) {
+        await tx.strategyInstance.update({
+          where: { id: existing.strategyInstanceId },
+          data: { callPut: effectiveCallPut as "CALL" | "PUT" },
+        });
+      }
+
+      // Case A0: Option trade WITH strategy instance — add/update fees in ledger (e.g. from Add Option that didn't persist FEE)
+      if (
+        effectiveCallPut &&
+        existing.strategyInstanceId &&
+        data.fees !== undefined
+      ) {
+        const instance = await tx.strategyInstance.findUnique({
+          where: { id: existing.strategyInstanceId },
+          include: { ledgerEntries: true },
+        });
+        if (instance) {
+          const underlying = await tx.underlying.findFirst({
+            where: { id: journalTrade.underlyingId, accountId },
+          });
+          const qty = existing.quantity ? parseFloat(existing.quantity.toString()) : 1;
+          const entryDate = existing.entryDateTime ?? new Date();
+
+          const existingFeeEntries = instance.ledgerEntries.filter((e) => e.type === "FEE");
+          const currentFeesTotal = existingFeeEntries.reduce(
+            (sum, e) => sum + parseFloat(e.amount.toString()),
+            0
+          );
+          const newFees = typeof data.fees === "number" ? data.fees : 0;
+
+          if (Math.abs(currentFeesTotal - newFees) > 0.001) {
+            await tx.ledgerEntry.deleteMany({
+              where: {
+                strategyInstanceId: instance.id,
+                type: "FEE",
+              },
+            });
+            if (newFees > 0) {
+              await tx.ledgerEntry.create({
+                data: {
+                  accountId,
+                  strategyInstanceId: instance.id,
+                  type: "FEE",
+                  amount: new Prisma.Decimal(newFees),
+                  occurredAt: entryDate,
+                  description: `Fee for ${instance.optionAction ?? "STO"} ${underlying?.symbol ?? ""}`,
+                },
+              });
+            }
+            const allEntries = await tx.ledgerEntry.findMany({
+              where: { strategyInstanceId: instance.id },
+            });
+            let nrop = new Prisma.Decimal(0);
+            for (const entry of allEntries) {
+              if (entry.type === "PREMIUM_CREDIT") nrop = nrop.plus(entry.amount);
+              else if (entry.type === "PREMIUM_DEBIT") nrop = nrop.minus(entry.amount);
+              else if (entry.type === "FEE") nrop = nrop.minus(entry.amount);
+            }
+            if (instance.status === "FINALIZED") {
+              await tx.strategyInstance.update({
+                where: { id: instance.id },
+                data: { realizedOptionProfit: nrop },
+              });
+            }
+          }
+        }
       }
 
       // Case A: Short option trade with NO strategy instance — create financials from scratch
@@ -198,7 +320,7 @@ export async function PATCH(
 
         if (instance && instance.status === "OPEN") {
           const underlying = await tx.underlying.findFirst({
-            where: { id: existing.underlyingId, accountId },
+            where: { id: journalTrade.underlyingId, accountId },
           });
 
           const qty = existing.quantity ? parseFloat(existing.quantity.toString()) : 1;

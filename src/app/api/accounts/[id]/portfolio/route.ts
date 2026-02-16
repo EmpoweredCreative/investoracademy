@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAuth, handleApiError } from "@/lib/api-helpers";
 import { backfillJournalOptionFinancials } from "@/lib/services/manualEntry";
+import { calculateOptionRiskByCategory } from "@/lib/services/wheelCalculator";
 import { z } from "zod";
 
 /**
@@ -132,8 +133,8 @@ export async function GET(
           }
         }
 
-        // Build option trade details
-        const optionTrades = (u.strategyInstances ?? []).map((inst) => {
+        // Build option trade details (per-instance legs with strategyType/strategyGroupId for grouping)
+        const legDetails = (u.strategyInstances ?? []).map((inst) => {
           let premiumReceived = 0;
           let premiumPaid = 0;
           let fees = 0;
@@ -151,7 +152,6 @@ export async function GET(
             ? parseFloat(inst.realizedOptionProfit!.toString())
             : null;
 
-          // Include journal trade details for inline editing
           const jt = inst.journalTrade;
           const journalTradeId = jt?.id ?? null;
           const entryPrice = jt?.entryPrice ? parseFloat(jt.entryPrice.toString()) : null;
@@ -175,8 +175,59 @@ export async function GET(
             exitPrice,
             entryDateTime,
             exitDateTime,
+            strategyType: inst.strategyType ?? null,
+            strategyGroupId: inst.strategyGroupId ?? null,
           };
         });
+
+        // Group multi-leg strategies: same strategyGroupId → one row with legs; single legs stay as-is
+        const optionTrades: Array<
+          | (typeof legDetails)[0]
+          | {
+              type: "group";
+              strategyType: string;
+              strategyGroupId: string;
+              status: string;
+              premiumReceived: number;
+              premiumPaid: number;
+              nrop: number | null;
+              contracts: number;
+              legs: Omit<(typeof legDetails)[0], "strategyType" | "strategyGroupId">[];
+            }
+        > = [];
+        const seenGroupIds = new Set<string>();
+        for (const leg of legDetails) {
+          const gid = leg.strategyGroupId;
+          if (gid && !seenGroupIds.has(gid)) {
+            seenGroupIds.add(gid);
+            const groupLegs = legDetails.filter((l) => l.strategyGroupId === gid);
+            if (groupLegs.length > 1) {
+              const totalReceived = groupLegs.reduce((s, l) => s + l.premiumReceived, 0);
+              const totalPaid = groupLegs.reduce((s, l) => s + l.premiumPaid, 0);
+              const totalNrop = groupLegs.reduce(
+                (s, l) => s + (l.nrop ?? l.premiumReceived - l.premiumPaid - l.fees),
+                0
+              );
+              const contracts = Math.max(...groupLegs.map((l) => l.quantity));
+              const status = groupLegs.some((l) => l.status === "OPEN") ? "OPEN" : "FINALIZED";
+              optionTrades.push({
+                type: "group",
+                strategyType: groupLegs[0]?.strategyType ?? "MULTI_LEG",
+                strategyGroupId: gid,
+                status,
+                premiumReceived: parseFloat(totalReceived.toFixed(2)),
+                premiumPaid: parseFloat(totalPaid.toFixed(2)),
+                nrop: parseFloat(totalNrop.toFixed(2)),
+                contracts,
+                legs: groupLegs.map(({ strategyType: _st, strategyGroupId: _gid, ...rest }) => rest),
+              });
+              continue;
+            }
+          }
+          if (!gid || (gid && legDetails.filter((l) => l.strategyGroupId === gid).length === 1)) {
+            optionTrades.push(leg);
+          }
+        }
 
         return {
           underlyingId: u.id,
@@ -207,6 +258,8 @@ export async function GET(
       ? positions.reduce((sum, p) => sum + (p.marketValue ?? 0), 0)
       : null;
 
+    const { total: optionRiskTotal } = await calculateOptionRiskByCategory(accountId);
+
     return NextResponse.json({
       positions,
       summary: {
@@ -216,6 +269,7 @@ export async function GET(
         totalMarketValue: totalMarketValue !== null ? parseFloat(totalMarketValue.toFixed(2)) : null,
         cashBalance: parseFloat(account.cashBalance.toString()),
         cashflowReserve: parseFloat(account.cashflowReserve.toString()),
+        optionRiskTotal: parseFloat(optionRiskTotal.toString()),
       },
     });
   } catch (error) {

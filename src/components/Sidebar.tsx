@@ -1,7 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   Briefcase,
@@ -16,6 +17,7 @@ import {
   ChevronRight,
   FileText,
 } from "lucide-react";
+import { Badge } from "@/components/ui/Badge";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -31,8 +33,33 @@ const accountNavItems = [
   { href: "/reinvest", label: "Reinvest", icon: RefreshCcw },
 ];
 
+interface Account {
+  id: string;
+  name: string;
+  mode: string;
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [accounts, setAccounts] = useState<Account[]>([]);
+
+  const accountIdFromPath = pathname.match(/^\/accounts\/([^/]+)/)?.[1] ?? null;
+  const currentAccount = accountIdFromPath
+    ? accounts.find((a) => a.id === accountIdFromPath)
+    : null;
+
+  useEffect(() => {
+    fetch("/api/accounts")
+      .then((r) => r.json())
+      .then((data) => setAccounts(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
+
+  const handleAccountChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value;
+    if (id) router.push(`/accounts/${id}`);
+  };
 
   return (
     <aside className="fixed left-0 top-0 h-full w-64 bg-card border-r border-border flex flex-col z-40">
@@ -44,6 +71,30 @@ export default function Sidebar() {
           </div>
           <span className="text-lg font-bold tracking-tight">WheelTracker</span>
         </Link>
+        {/* Account switcher + Live/Simulated badge */}
+        <div className="mt-4 flex items-center gap-2">
+          <select
+            value={currentAccount?.id ?? ""}
+            onChange={handleAccountChange}
+            className="flex-1 min-w-0 appearance-none bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground cursor-pointer hover:border-muted-foreground/30 focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+            title="Switch account"
+          >
+            <option value="">Select account</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+          {currentAccount && (
+            <Badge
+              variant={currentAccount.mode === "SIMULATED" ? "warning" : "success"}
+              className="shrink-0 text-[10px]"
+            >
+              {currentAccount.mode === "SIMULATED" ? "Simulated" : "Live"}
+            </Badge>
+          )}
+        </div>
       </div>
 
       {/* Main Nav */}

@@ -82,10 +82,18 @@ export async function GET(
       },
       include: {
         underlying: true,
-        strategyInstance: true,
+        strategyInstance: { include: { ledgerEntries: true } },
       },
       orderBy: { entryDateTime: "desc" },
     });
+
+    // Compute fees per trade from ledger entries
+    const getTradeFees = (trade: (typeof optionTrades)[0]) => {
+      if (!trade.strategyInstance?.ledgerEntries) return 0;
+      return trade.strategyInstance.ledgerEntries
+        .filter((e) => e.type === "FEE")
+        .reduce((sum, e) => sum + parseFloat(e.amount.toString()), 0);
+    };
 
     // Build per-trade-type insights
     const insightsByType: TradeTypeInsight[] = [];
@@ -113,8 +121,12 @@ export async function GET(
 
         if (exit !== null) {
           typeClosedTrades++;
-          // For short options: profit = (entry - exit) * qty * 100
-          const pnl = (entry - exit) * qty * 100;
+          const fees = getTradeFees(trade);
+          const pnl =
+            trade.strategyInstance?.status === "FINALIZED" &&
+            trade.strategyInstance.realizedOptionProfit != null
+              ? parseFloat(trade.strategyInstance.realizedOptionProfit.toString())
+              : (entry - exit) * qty * 100 - fees;
           typeTotalPnl += pnl;
           if (pnl > 0) typeWinners++;
           else typeLosers++;
@@ -162,7 +174,12 @@ export async function GET(
 
           if (exit !== null) {
             closedTrades++;
-            const pnl = (entry - exit) * qty * 100;
+            const fees = getTradeFees(trade);
+            const pnl =
+              trade.strategyInstance?.status === "FINALIZED" &&
+              trade.strategyInstance.realizedOptionProfit != null
+                ? parseFloat(trade.strategyInstance.realizedOptionProfit.toString())
+                : (entry - exit) * qty * 100 - fees;
             totalPnl += pnl;
             if (pnl > 0) winners++;
             else losers++;

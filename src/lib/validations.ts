@@ -46,6 +46,7 @@ export const optionLegSchema = z.object({
   strike: z.number().positive(),
   quantity: z.number().positive(),
   price: z.number().min(0),
+  entryDelta: z.number().min(-1).max(1).optional(),
 });
 
 export const optionEntrySchema = z.object({

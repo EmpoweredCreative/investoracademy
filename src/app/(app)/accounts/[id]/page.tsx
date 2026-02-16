@@ -71,6 +71,40 @@ interface OptionTradeDetail {
   exitDateTime: string | null;
 }
 
+/** Multi-leg strategy row (e.g. Bull Put Spread) with expandable legs */
+interface OptionTradeGroup {
+  type: "group";
+  strategyType: string;
+  strategyGroupId: string;
+  status: string;
+  premiumReceived: number;
+  premiumPaid: number;
+  nrop: number | null;
+  contracts: number;
+  legs: OptionTradeDetail[];
+}
+
+type OptionTradeRow = OptionTradeDetail | OptionTradeGroup;
+
+function isOptionTradeGroup(row: OptionTradeRow): row is OptionTradeGroup {
+  return "type" in row && row.type === "group";
+}
+
+const STRATEGY_TYPE_LABELS: Record<string, string> = {
+  BULL_PUT_SPREAD: "Bull Put Spread",
+  BEAR_CALL_SPREAD: "Bear Call Spread",
+  BULL_CALL_SPREAD: "Bull Call Spread",
+  BEAR_PUT_SPREAD: "Bear Put Spread",
+  IRON_CONDOR: "Iron Condor",
+  IRON_BUTTERFLY: "Iron Butterfly",
+  SHORT_STRANGLE: "Short Strangle",
+  TIME_SPREAD: "Time Spread",
+  COVERED_CALL: "Covered Call",
+  SHORT_PUT: "Short Put",
+  LEAP_CALL: "LEAP Call",
+  LEAP_PUT: "LEAP Put",
+};
+
 interface PortfolioPosition {
   underlyingId: string;
   symbol: string;
@@ -88,7 +122,7 @@ interface PortfolioPosition {
   originalPnl: number | null;
   originalPnlPct: number | null;
   lotCount: number;
-  optionTrades?: OptionTradeDetail[];
+  optionTrades?: OptionTradeRow[];
 }
 
 interface PortfolioSummary {
@@ -98,6 +132,7 @@ interface PortfolioSummary {
   totalMarketValue: number | null;
   cashBalance: number;
   cashflowReserve: number;
+  optionRiskTotal?: number;
 }
 
 export default function AccountDetailPage() {
@@ -145,6 +180,12 @@ export default function AccountDetailPage() {
   const [optionExitDate, setOptionExitDate] = useState("");
   const [savingOption, setSavingOption] = useState(false);
   const [optionError, setOptionError] = useState<string | null>(null);
+
+  // Option trades table: date sort and type filter
+  const [optionDateSort, setOptionDateSort] = useState<"asc" | "desc">("desc");
+  const [optionTypeFilter, setOptionTypeFilter] = useState<"all" | "CALL" | "PUT">("all");
+  // Expanded strategy group (multi-leg) to show legs
+  const [expandedOptionGroupId, setExpandedOptionGroupId] = useState<string | null>(null);
 
   // Onboarding confirmation
   const [showOnboardingConfirm, setShowOnboardingConfirm] = useState(false);
@@ -756,10 +797,25 @@ export default function AccountDetailPage() {
         ) : (
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <p className="text-2xl font-bold text-success">
-                ${parseFloat(account.cashBalance).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </p>
-              <p className="text-xs text-muted mt-1">Free Cash</p>
+              {(() => {
+                const totalCash = parseFloat(account.cashBalance);
+                const reserved = summary?.optionRiskTotal ?? 0;
+                const freeCash = totalCash - reserved;
+                return (
+                  <>
+                    <p className="text-2xl font-bold text-success">
+                      ${freeCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </p>
+                    <p className="text-xs text-muted mt-1">Free Cash</p>
+                    {reserved > 0 && (
+                      <p className="text-xs text-muted mt-0.5">
+                        ${totalCash.toLocaleString(undefined, { minimumFractionDigits: 2 })} total · $
+                        {reserved.toLocaleString(undefined, { minimumFractionDigits: 2 })} reserved for open options
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
             </div>
             <div>
               <p className="text-2xl font-bold">
@@ -877,10 +933,29 @@ export default function AccountDetailPage() {
               </thead>
               <tbody>
                 {positions.map((pos) => {
-                  // Compute total net premium from all option trades (open + closed)
-                  const totalOptionPremium = (pos.optionTrades ?? []).reduce(
-                    (sum, ot) => sum + (ot.nrop ?? ot.netPremium),
-                    0
+                  const optionRows = pos.optionTrades ?? [];
+                  const totalOptionPremium = optionRows.reduce((sum, row) => {
+                    if (isOptionTradeGroup(row)) return sum + (row.nrop ?? 0);
+                    return sum + (row.nrop ?? row.netPremium);
+                  }, 0);
+                  const optionTotals = optionRows.reduce(
+                    (acc, row) => {
+                      if (isOptionTradeGroup(row)) {
+                        return {
+                          contracts: acc.contracts + row.contracts,
+                          premiumReceived: acc.premiumReceived + row.premiumReceived,
+                          premiumPaid: acc.premiumPaid + row.premiumPaid,
+                          netPnl: acc.netPnl + (row.nrop ?? 0),
+                        };
+                      }
+                      return {
+                        contracts: acc.contracts + row.quantity,
+                        premiumReceived: acc.premiumReceived + row.premiumReceived,
+                        premiumPaid: acc.premiumPaid + row.premiumPaid,
+                        netPnl: acc.netPnl + (row.nrop ?? row.netPremium),
+                      };
+                    },
+                    { contracts: 0, premiumReceived: 0, premiumPaid: 0, netPnl: 0 }
                   );
                   const hasPremiumReduction = pos.totalPremiumReduction > 0;
                   const hasOptionTrades = (pos.optionTrades?.length ?? 0) > 0;
@@ -1122,14 +1197,84 @@ export default function AccountDetailPage() {
                             )}
 
                             {/* Option trade line items */}
-                            {hasOptionTrades && (
+                            {hasOptionTrades && (() => {
+                              const rows = pos.optionTrades!;
+                              const filtered =
+                                optionTypeFilter === "all"
+                                  ? rows
+                                  : rows.filter((row) =>
+                                      isOptionTradeGroup(row)
+                                        ? row.legs.some((l) => l.callPut === optionTypeFilter)
+                                        : row.callPut === optionTypeFilter
+                                    );
+                              const getRowDate = (row: OptionTradeRow) =>
+                                isOptionTradeGroup(row)
+                                  ? row.legs[0]?.entryDateTime ?? null
+                                  : row.entryDateTime;
+                              const sorted = [...filtered].sort((a, b) => {
+                                const tA = getRowDate(a) ? new Date(getRowDate(a)!).getTime() : 0;
+                                const tB = getRowDate(b) ? new Date(getRowDate(b)!).getTime() : 0;
+                                if (tA === 0 && tB === 0) return 0;
+                                if (tA === 0) return optionDateSort === "asc" ? 1 : -1;
+                                if (tB === 0) return optionDateSort === "asc" ? -1 : 1;
+                                return optionDateSort === "asc" ? tA - tB : tB - tA;
+                              });
+                              const displayTotals = sorted.reduce(
+                                (acc, row) => {
+                                  if (isOptionTradeGroup(row)) {
+                                    return {
+                                      contracts: acc.contracts + row.contracts,
+                                      premiumReceived: acc.premiumReceived + row.premiumReceived,
+                                      premiumPaid: acc.premiumPaid + row.premiumPaid,
+                                      netPnl: acc.netPnl + (row.nrop ?? 0),
+                                    };
+                                  }
+                                  return {
+                                    contracts: acc.contracts + row.quantity,
+                                    premiumReceived: acc.premiumReceived + row.premiumReceived,
+                                    premiumPaid: acc.premiumPaid + row.premiumPaid,
+                                    netPnl: acc.netPnl + (row.nrop ?? row.netPremium),
+                                  };
+                                },
+                                { contracts: 0, premiumReceived: 0, premiumPaid: 0, netPnl: 0 }
+                              );
+                              return (
                               <div>
-                                <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">
-                                  Option Trades
-                                </p>
+                                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                  <p className="text-xs font-semibold text-muted uppercase tracking-wider">
+                                    Option Trades
+                                  </p>
+                                  <div className="flex items-center gap-3">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] text-muted uppercase">Date</span>
+                                      <select
+                                        value={optionDateSort}
+                                        onChange={(e) => setOptionDateSort(e.target.value as "asc" | "desc")}
+                                        className="text-xs px-2 py-1 bg-background border border-border rounded text-foreground"
+                                      >
+                                        <option value="desc">Newest first</option>
+                                        <option value="asc">Oldest first</option>
+                                      </select>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] text-muted uppercase">Type</span>
+                                      <select
+                                        value={optionTypeFilter}
+                                        onChange={(e) => setOptionTypeFilter(e.target.value as "all" | "CALL" | "PUT")}
+                                        className="text-xs px-2 py-1 bg-background border border-border rounded text-foreground"
+                                      >
+                                        <option value="all">All</option>
+                                        <option value="CALL">Call</option>
+                                        <option value="PUT">Put</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                </div>
                                 <table className="w-full text-xs">
                                   <thead>
                                     <tr className="border-b border-border/30">
+                                      <th className="py-1.5 px-2 w-8" />
+                                      <th className="text-left py-1.5 px-2 font-medium text-muted">Date</th>
                                       <th className="text-left py-1.5 px-2 font-medium text-muted">Type</th>
                                       <th className="text-right py-1.5 px-2 font-medium text-muted">Strike</th>
                                       <th className="text-right py-1.5 px-2 font-medium text-muted">Contracts</th>
@@ -1142,11 +1287,180 @@ export default function AccountDetailPage() {
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {pos.optionTrades!.map((ot) => {
+                                    {sorted.map((row) => {
+                                      if (isOptionTradeGroup(row)) {
+                                        const label = STRATEGY_TYPE_LABELS[row.strategyType] ?? row.strategyType;
+                                        const firstDate = row.legs[0]?.entryDateTime;
+                                        const isGroupExpanded = expandedOptionGroupId === row.strategyGroupId;
+                                        return (
+                                          <React.Fragment key={row.strategyGroupId}>
+                                            <tr className="border-b border-border/20 bg-muted/10">
+                                              <td className="py-1.5 px-2">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setExpandedOptionGroupId(isGroupExpanded ? null : row.strategyGroupId)}
+                                                  className="flex items-center gap-1 text-muted hover:text-foreground"
+                                                >
+                                                  {isGroupExpanded ? (
+                                                    <ChevronDown className="w-3.5 h-3.5" />
+                                                  ) : (
+                                                    <ChevronRight className="w-3.5 h-3.5" />
+                                                  )}
+                                                </button>
+                                              </td>
+                                              <td className="py-1.5 px-2 text-muted">
+                                                {firstDate ? new Date(firstDate).toLocaleDateString() : "—"}
+                                              </td>
+                                              <td className="py-1.5 px-2">
+                                                <Badge variant="core">{label}</Badge>
+                                              </td>
+                                              <td className="py-1.5 px-2 text-right">—</td>
+                                              <td className="py-1.5 px-2 text-right">{row.contracts}</td>
+                                              <td className="py-1.5 px-2 text-right">—</td>
+                                              <td className="py-1.5 px-2 text-right text-success">
+                                                ${fmtNum(row.premiumReceived)}
+                                              </td>
+                                              <td className="py-1.5 px-2 text-right text-danger">
+                                                ${fmtNum(row.premiumPaid)}
+                                              </td>
+                                              <td className={`py-1.5 px-2 text-right font-semibold ${
+                                                (row.nrop ?? 0) >= 0 ? "text-success" : "text-danger"
+                                              }`}>
+                                                {(row.nrop ?? 0) >= 0 ? "" : "-"}${fmtNum(Math.abs(row.nrop ?? 0))}
+                                              </td>
+                                              <td className="py-1.5 px-2">
+                                                <Badge variant={row.status === "FINALIZED" ? "success" : "warning"}>
+                                                  {row.status === "FINALIZED" ? "Closed" : "Open"}
+                                                </Badge>
+                                              </td>
+                                              <td className="py-1.5 px-2 w-24" />
+                                            </tr>
+                                            {isGroupExpanded && row.legs.map((leg) => {
+                                              const isEditingThis = editingOptionId === leg.id;
+                                              return (
+                                                <React.Fragment key={leg.id}>
+                                                  <tr className="border-b border-border/20 bg-background/50">
+                                                    <td className="py-1.5 px-2 pl-6 text-muted">—</td>
+                                                    <td className="py-1.5 px-2 text-muted">
+                                                      {leg.entryDateTime
+                                                        ? new Date(leg.entryDateTime).toLocaleDateString()
+                                                        : "—"}
+                                                    </td>
+                                                    <td className="py-1.5 px-2">
+                                                      <Badge variant={leg.callPut === "CALL" ? "warning" : "core"}>
+                                                        {leg.callPut}
+                                                      </Badge>
+                                                    </td>
+                                                    <td className="py-1.5 px-2 text-right font-mono">
+                                                      {leg.strike !== null ? `$${fmtNum(leg.strike)}` : "—"}
+                                                    </td>
+                                                    <td className="py-1.5 px-2 text-right">{leg.quantity}</td>
+                                                    <td className="py-1.5 px-2 text-right">
+                                                      {leg.entryPrice !== null ? `$${fmtNum(leg.entryPrice)}` : "—"}
+                                                    </td>
+                                                    <td className="py-1.5 px-2 text-right text-success">
+                                                      {leg.premiumReceived > 0 ? `$${fmtNum(leg.premiumReceived)}` : "$0.00"}
+                                                    </td>
+                                                    <td className="py-1.5 px-2 text-right text-danger">
+                                                      {leg.premiumPaid > 0 ? `$${fmtNum(leg.premiumPaid)}` : "$0.00"}
+                                                    </td>
+                                                    <td className={`py-1.5 px-2 text-right font-semibold ${
+                                                      (leg.nrop ?? leg.netPremium) > 0 ? "text-success" :
+                                                      (leg.nrop ?? leg.netPremium) < 0 ? "text-danger" : "text-foreground"
+                                                    }`}>
+                                                      {(leg.nrop ?? leg.netPremium) >= 0 ? "" : "-"}${fmtNum(Math.abs(leg.nrop ?? leg.netPremium))}
+                                                    </td>
+                                                    <td className="py-1.5 px-2">
+                                                      <Badge variant={leg.status === "FINALIZED" ? "success" : "warning"}>
+                                                        {leg.status === "FINALIZED" ? "Closed" : "Open"}
+                                                      </Badge>
+                                                    </td>
+                                                    <td className="py-1.5 px-2 text-right">
+                                                      {leg.status === "OPEN" && leg.journalTradeId && !isEditingThis && (
+                                                        <button
+                                                          onClick={() => startOptionEdit(leg)}
+                                                          className="px-2 py-0.5 text-[10px] font-medium bg-accent/10 text-accent rounded hover:bg-accent/20 transition-colors"
+                                                        >
+                                                          Close Trade
+                                                        </button>
+                                                      )}
+                                                      {leg.status === "OPEN" && isEditingThis && (
+                                                        <button
+                                                          onClick={cancelOptionEdit}
+                                                          className="px-2 py-0.5 text-[10px] font-medium text-muted hover:text-foreground transition-colors"
+                                                        >
+                                                          Cancel
+                                                        </button>
+                                                      )}
+                                                    </td>
+                                                  </tr>
+                                                  {isEditingThis && leg.journalTradeId && (
+                                                    <tr className="bg-accent/5 border-b border-border/20">
+                                                      <td colSpan={11} className="py-3 px-4">
+                                                        <div className="flex items-end gap-4">
+                                                          <div className="flex-1 max-w-[160px]">
+                                                            <label className="block text-[10px] font-medium text-muted mb-1">Exit Price (per contract)</label>
+                                                            <input
+                                                              type="number"
+                                                              min="0"
+                                                              step="0.01"
+                                                              value={optionExitPrice}
+                                                              onChange={(e) => setOptionExitPrice(e.target.value)}
+                                                              placeholder="0.00 = expired"
+                                                              className="w-full px-2 py-1.5 text-xs bg-background border border-border rounded text-foreground"
+                                                              autoFocus
+                                                              onKeyDown={(e) => {
+                                                                if (e.key === "Enter") saveOptionClose(leg.journalTradeId!);
+                                                                if (e.key === "Escape") cancelOptionEdit();
+                                                              }}
+                                                            />
+                                                          </div>
+                                                          <div className="flex-1 max-w-[200px]">
+                                                            <label className="block text-[10px] font-medium text-muted mb-1">Exit Date</label>
+                                                            <input
+                                                              type="datetime-local"
+                                                              value={optionExitDate}
+                                                              onChange={(e) => setOptionExitDate(e.target.value)}
+                                                              className="w-full px-2 py-1.5 text-xs bg-background border border-border rounded text-foreground"
+                                                            />
+                                                          </div>
+                                                          <button
+                                                            onClick={() => saveOptionClose(leg.journalTradeId!)}
+                                                            disabled={savingOption}
+                                                            className="px-3 py-1.5 text-xs font-medium bg-accent text-white rounded hover:bg-accent/90 transition-colors disabled:opacity-50"
+                                                          >
+                                                            {savingOption ? "Saving…" : "Confirm Close"}
+                                                          </button>
+                                                          <button
+                                                            onClick={cancelOptionEdit}
+                                                            className="px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground transition-colors"
+                                                          >
+                                                            Cancel
+                                                          </button>
+                                                        </div>
+                                                        {optionError && (
+                                                          <p className="text-danger text-[10px] mt-1.5">{optionError}</p>
+                                                        )}
+                                                      </td>
+                                                    </tr>
+                                                  )}
+                                                </React.Fragment>
+                                              );
+                                            })}
+                                          </React.Fragment>
+                                        );
+                                      }
+                                      const ot = row;
                                       const isEditingThis = editingOptionId === ot.id;
                                       return (
                                         <React.Fragment key={ot.id}>
                                         <tr className="border-b border-border/20">
+                                          <td className="py-1.5 px-2 w-8" />
+                                          <td className="py-1.5 px-2 text-muted">
+                                            {ot.entryDateTime
+                                              ? new Date(ot.entryDateTime).toLocaleDateString()
+                                              : "—"}
+                                          </td>
                                           <td className="py-1.5 px-2">
                                             <Badge variant={ot.callPut === "CALL" ? "warning" : "core"}>
                                               {ot.callPut}
@@ -1199,7 +1513,7 @@ export default function AccountDetailPage() {
                                         {/* Inline close trade form */}
                                         {isEditingThis && ot.journalTradeId && (
                                           <tr className="bg-accent/5 border-b border-border/20">
-                                            <td colSpan={9} className="py-3 px-4">
+                                            <td colSpan={11} className="py-3 px-4">
                                               <div className="flex items-end gap-4">
                                                 <div className="flex-1 max-w-[160px]">
                                                   <label className="block text-[10px] font-medium text-muted mb-1">
@@ -1255,19 +1569,47 @@ export default function AccountDetailPage() {
                                       );
                                     })}
                                   </tbody>
+                                  <tfoot>
+                                    <tr className="border-t border-border/50 bg-card-hover font-medium">
+                                      <td className="py-1.5 px-2 w-8" />
+                                      <td className="py-1.5 px-2 text-muted">Totals</td>
+                                      <td className="py-1.5 px-2" />
+                                      <td className="py-1.5 px-2 text-right" />
+                                      <td className="py-1.5 px-2 text-right">{displayTotals.contracts}</td>
+                                      <td className="py-1.5 px-2 text-right">—</td>
+                                      <td className="py-1.5 px-2 text-right text-success">
+                                        ${fmtNum(displayTotals.premiumReceived)}
+                                      </td>
+                                      <td className="py-1.5 px-2 text-right text-danger">
+                                        ${fmtNum(displayTotals.premiumPaid)}
+                                      </td>
+                                      <td className={`py-1.5 px-2 text-right font-semibold ${
+                                        displayTotals.netPnl > 0 ? "text-success" :
+                                        displayTotals.netPnl < 0 ? "text-danger" : "text-foreground"
+                                      }`}>
+                                        {displayTotals.netPnl >= 0 ? "" : "-"}${fmtNum(Math.abs(displayTotals.netPnl))}
+                                      </td>
+                                      <td className="py-1.5 px-2" colSpan={2} />
+                                    </tr>
+                                  </tfoot>
                                 </table>
                               </div>
-                            )}
+                              );
+                            })()}
 
-                            {/* Combined P&L summary */}
-                            {(hasPremiumReduction || hasOptionPremium) && pos.originalPnl !== null && (
+                            {/* Combined P&L summary — show for every position with options or premium reduction */}
+                            {(hasPremiumReduction || hasOptionPremium) && (
                               <div className="pt-3 border-t border-border/50">
                                 <div className="grid grid-cols-3 gap-6 text-sm">
                                   <div className="flex justify-between">
                                     <span className="text-muted">Stock P/L</span>
-                                    <span className={pos.originalPnl >= 0 ? "text-success" : "text-danger"}>
-                                      {pos.originalPnl >= 0 ? "+" : "-"}${fmtNum(Math.abs(pos.originalPnl))}
-                                    </span>
+                                    {pos.originalPnl !== null ? (
+                                      <span className={pos.originalPnl >= 0 ? "text-success" : "text-danger"}>
+                                        {pos.originalPnl >= 0 ? "+" : "-"}${fmtNum(Math.abs(pos.originalPnl))}
+                                      </span>
+                                    ) : (
+                                      <span className="text-muted">—</span>
+                                    )}
                                   </div>
                                   <div className="flex justify-between">
                                     <span className="text-muted">Option Premium</span>
@@ -1277,11 +1619,13 @@ export default function AccountDetailPage() {
                                   </div>
                                   <div className="flex justify-between font-semibold">
                                     <span className="text-muted">Combined P/L</span>
-                                    <span className={combinedPnl !== null && combinedPnl >= 0 ? "text-success" : "text-danger"}>
-                                      {combinedPnl !== null
-                                        ? `${combinedPnl >= 0 ? "+" : "-"}$${fmtNum(Math.abs(combinedPnl))}`
-                                        : "—"}
-                                    </span>
+                                    {combinedPnl !== null ? (
+                                      <span className={combinedPnl >= 0 ? "text-success" : "text-danger"}>
+                                        {combinedPnl >= 0 ? "+" : "-"}${fmtNum(Math.abs(combinedPnl))}
+                                      </span>
+                                    ) : (
+                                      <span className="text-muted">—</span>
+                                    )}
                                   </div>
                                 </div>
                               </div>

@@ -1,6 +1,9 @@
 import { WheelCategory, LedgerType, CallPut, LongShort, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 
+/** Multiplier for options (1 contract = 100 shares). */
+const OPTIONS_MULTIPLIER = 100;
+
 /**
  * Resolve the WheelCategory for a StrategyInstance.
  * Resolution order:
@@ -58,6 +61,113 @@ interface WheelSlice {
 }
 
 /**
+ * Compute capital-at-risk for open option positions by wheel category.
+ * Used so Mad Money (and other categories) show risk allocated to options,
+ * and Free Capital is reduced by that amount (cash is "reserved" against the risk).
+ */
+export async function calculateOptionRiskByCategory(accountId: string): Promise<{
+  byCategory: Map<WheelCategory, Prisma.Decimal>;
+  total: Prisma.Decimal;
+}> {
+  const openInstances = await prisma.strategyInstance.findMany({
+    where: { accountId, instrumentType: "OPTION", status: "OPEN" },
+    include: {
+      underlying: { include: { wheelClassification: true } },
+    },
+    orderBy: [{ strategyGroupId: "asc" }, { createdAt: "asc" }],
+  });
+
+  const byCategory = new Map<WheelCategory, Prisma.Decimal>();
+  (["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"] as WheelCategory[]).forEach((c) =>
+    byCategory.set(c, new Prisma.Decimal(0))
+  );
+
+  const resolveCategory = (inst: (typeof openInstances)[0]): WheelCategory => {
+    if (inst.wheelCategoryOverride) return inst.wheelCategoryOverride;
+    if (inst.underlying.wheelClassification) return inst.underlying.wheelClassification.category;
+    return "MAD_MONEY";
+  };
+
+  const addRisk = (category: WheelCategory, amount: Prisma.Decimal) => {
+    byCategory.set(category, (byCategory.get(category) ?? new Prisma.Decimal(0)).plus(amount));
+  };
+
+  const processedGroupIds = new Set<string | null>();
+
+  for (let i = 0; i < openInstances.length; i++) {
+    const inst = openInstances[i];
+    const gid = inst.strategyGroupId;
+
+    if (gid && processedGroupIds.has(gid)) continue;
+
+    let risk: Prisma.Decimal;
+    const category = resolveCategory(inst);
+    const qty = inst.quantity;
+    const mult = new Prisma.Decimal(OPTIONS_MULTIPLIER);
+
+    if (gid) {
+      const group = openInstances.filter((x) => x.strategyGroupId === gid);
+      processedGroupIds.add(gid);
+
+      const strategyType = inst.strategyType;
+
+      if (strategyType === "BULL_PUT_SPREAD" || strategyType === "BEAR_PUT_SPREAD") {
+        const puts = group.filter((x) => x.callPut === "PUT");
+        const shortPut = puts.find((x) => x.longShort === "SHORT");
+        const longPut = puts.find((x) => x.longShort === "LONG");
+        if (shortPut?.strike != null && longPut?.strike != null) {
+          const width = shortPut.strike.gt(longPut.strike)
+            ? shortPut.strike.minus(longPut.strike)
+            : longPut.strike.minus(shortPut.strike);
+          risk = width.mul(mult).mul(qty);
+        } else {
+          risk = new Prisma.Decimal(0);
+        }
+      } else if (strategyType === "BEAR_CALL_SPREAD" || strategyType === "BULL_CALL_SPREAD") {
+        const calls = group.filter((x) => x.callPut === "CALL");
+        const shortCall = calls.find((x) => x.longShort === "SHORT");
+        const longCall = calls.find((x) => x.longShort === "LONG");
+        if (shortCall?.strike != null && longCall?.strike != null) {
+          const width = longCall.strike.gt(shortCall.strike)
+            ? longCall.strike.minus(shortCall.strike)
+            : shortCall.strike.minus(longCall.strike);
+          risk = width.mul(mult).mul(qty);
+        } else {
+          risk = new Prisma.Decimal(0);
+        }
+      } else if (strategyType === "IRON_CONDOR" || strategyType === "IRON_BUTTERFLY" || strategyType === "SHORT_STRANGLE") {
+        const puts = group.filter((x) => x.callPut === "PUT");
+        const calls = group.filter((x) => x.callPut === "CALL");
+        const shortPut = puts.find((x) => x.longShort === "SHORT");
+        const shortCall = calls.find((x) => x.longShort === "SHORT");
+        if (shortPut?.strike != null && shortCall?.strike != null) {
+          const putSide = shortPut.strike.mul(mult).mul(qty);
+          const callSide = shortCall.strike.mul(mult).mul(qty);
+          risk = putSide.plus(callSide);
+        } else {
+          risk = new Prisma.Decimal(0);
+        }
+      } else {
+        risk = new Prisma.Decimal(0);
+      }
+
+      addRisk(category, risk);
+    } else {
+      if (inst.longShort === "SHORT" && (inst.callPut === "PUT" || inst.callPut === "CALL")) {
+        risk = (inst.strike ?? new Prisma.Decimal(0)).mul(mult).mul(qty);
+      } else {
+        risk = new Prisma.Decimal(0);
+      }
+      addRisk(category, risk);
+    }
+  }
+
+  let total = new Prisma.Decimal(0);
+  byCategory.forEach((v) => (total = total.plus(v)));
+  return { byCategory, total };
+}
+
+/**
  * Calculate the Wealth Wheel allocation for an account.
  * MVP uses COST BASIS only (no live pricing).
  * Cash balance uses the manually-entered value on the Account,
@@ -86,9 +196,8 @@ export async function calculateWheel(accountId: string): Promise<{
   const cashBalance = manualCash.gt(0) ? manualCash : await calculateCashBalance(accountId);
   const cashflowReserve = account.cashflowReserve ?? new Prisma.Decimal(0);
 
-  // Calculate stock holdings by category
-  // Fetch explicit classifications and journal trade overrides in parallel
-  const [classifications, journalTrades, lots] = await Promise.all([
+  // Calculate stock holdings and open-option risk by category
+  const [classifications, journalTrades, lots, optionRisk] = await Promise.all([
     prisma.wealthWheelClassification.findMany({
       where: { accountId },
     }),
@@ -100,6 +209,7 @@ export async function calculateWheel(accountId: string): Promise<{
     prisma.stockLot.findMany({
       where: { accountId, remaining: { not: 0 } },
     }),
+    calculateOptionRiskByCategory(accountId),
   ]);
 
   // Build category map: WealthWheelClassification is the primary source
@@ -150,10 +260,18 @@ export async function calculateWheel(accountId: string): Promise<{
     categoryTotals.set(category, (categoryTotals.get(category) ?? new Prisma.Decimal(0)).plus(lotValue));
   }
 
-  // FREE_CAPITAL uses cash balance
+  // Add open-option risk to each category (Mad Money, etc.) so risk shows in the wheel
+  optionRisk.byCategory.forEach((riskAmount, category) => {
+    if (riskAmount.gt(0)) {
+      categoryTotals.set(category, (categoryTotals.get(category) ?? new Prisma.Decimal(0)).plus(riskAmount));
+    }
+  });
+
+  // FREE_CAPITAL = cash minus total option risk (cash "reserved" against open options)
+  const freeCapitalCash = cashBalance.minus(optionRisk.total);
   categoryTotals.set(
     "FREE_CAPITAL",
-    (categoryTotals.get("FREE_CAPITAL") ?? new Prisma.Decimal(0)).plus(cashBalance.gt(0) ? cashBalance : new Prisma.Decimal(0))
+    (categoryTotals.get("FREE_CAPITAL") ?? new Prisma.Decimal(0)).plus(freeCapitalCash.gt(0) ? freeCapitalCash : new Prisma.Decimal(0))
   );
 
   // Compute totals

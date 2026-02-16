@@ -5,7 +5,8 @@ import { yahooMarketDataProvider } from "@/lib/marketdata/yahooProvider";
 
 /**
  * POST /api/accounts/:id/portfolio/refresh-prices
- * Fetches current prices from Yahoo Finance for all portfolio symbols and updates Underlying.currentPrice.
+ * Fetches current prices from Yahoo Finance for all portfolio symbols (stock and option positions)
+ * and persists them to Underlying.currentPrice so they are still there on the next visit.
  */
 export async function POST(
   _req: Request,
@@ -26,20 +27,30 @@ export async function POST(
         stockLots: {
           where: { remaining: { not: 0 } },
         },
+        strategyInstances: {
+          where: { instrumentType: "OPTION" },
+          select: { id: true },
+        },
       },
     });
 
-    const withLots = underlyings.filter((u) => u.stockLots.length > 0);
-    if (withLots.length === 0) {
+    // Refresh prices for every symbol that appears in the portfolio (has stock lots or options)
+    const inPortfolio = underlyings.filter((u) => {
+      const hasStock = u.stockLots.length > 0;
+      const hasOptions = (u.strategyInstances?.length ?? 0) > 0;
+      return hasStock || hasOptions;
+    });
+
+    if (inPortfolio.length === 0) {
       return NextResponse.json({
         updated: 0,
-        message: "No stock positions to refresh.",
+        message: "No positions to refresh.",
       });
     }
 
     const results: { symbol: string; underlyingId: string; price: number | null; error?: string }[] = [];
 
-    for (const u of withLots) {
+    for (const u of inPortfolio) {
       try {
         const quote = await yahooMarketDataProvider.getQuote(u.symbol);
         const price = quote.last;
@@ -71,7 +82,7 @@ export async function POST(
     const updated = results.filter((r) => r.price !== null).length;
     return NextResponse.json({
       updated,
-      total: withLots.length,
+      total: inPortfolio.length,
       results,
     });
   } catch (error) {

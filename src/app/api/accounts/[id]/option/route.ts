@@ -20,6 +20,8 @@ export async function POST(
     const body = await req.json();
     const data = optionEntrySchema.parse(body);
 
+    const feesAmount = typeof data.fees === "number" && !Number.isNaN(data.fees) ? data.fees : 0;
+
     const result = await processOptionEntry({
       accountId,
       symbol: data.symbol,
@@ -30,7 +32,7 @@ export async function POST(
       quantity: data.quantity,
       price: data.price,
       entryDelta: data.entryDelta,
-      fees: data.fees,
+      fees: feesAmount,
       occurredAt: new Date(data.occurredAt),
       strategyType: data.strategyType,
       premiumPolicyOverride: data.premiumPolicyOverride,

@@ -188,7 +188,10 @@ export default function OptionEntryPage() {
         quantity: parseFloat(primaryState.quantity),
         price: parseFloat(primaryState.price),
         entryDelta: primaryState.delta ? parseFloat(primaryState.delta) : undefined,
-        fees: parseFloat(fees || "0"),
+        fees: (() => {
+          const n = parseFloat(String(fees || "0").trim());
+          return Number.isNaN(n) ? 0 : n;
+        })(),
         occurredAt: new Date(occurredAt).toISOString(),
         premiumPolicyOverride: premiumPolicy || undefined,
         wheelCategoryOverride: wheelCategory || undefined,
@@ -203,6 +206,7 @@ export default function OptionEntryPage() {
           strike: parseFloat(legs[i + 1].strike),
           quantity: parseFloat(legs[i + 1].quantity),
           price: parseFloat(legs[i + 1].price),
+          entryDelta: legs[i + 1].delta ? parseFloat(legs[i + 1].delta) : undefined,
         }));
       }
 
@@ -346,6 +350,44 @@ export default function OptionEntryPage() {
               </div>
             </div>
           ))}
+
+          {/* Net premium (auto-calculated for multi-leg) — right under final leg, in green */}
+          {strategy.legs.length > 1 &&
+            (() => {
+              let credit = 0;
+              let debit = 0;
+              strategy.legs.forEach((template, i) => {
+                const p = parseFloat(legs[i]?.price ?? "0") || 0;
+                const q = parseFloat(legs[i]?.quantity ?? "1") || 1;
+                const notional = p * q * 100;
+                if (template.action === "STO") credit += notional;
+                else debit += notional;
+              });
+              const feeNum = parseFloat(String(fees || "0").trim()) || 0;
+              const netPremium = credit - debit - feeNum;
+              const hasAnyInput = strategy.legs.some((_, i) => legs[i]?.price?.trim() !== "");
+              if (!hasAnyInput) return null;
+              const isCredit = netPremium >= 0;
+              return (
+                <div
+                  className={`rounded-lg border p-4 ${
+                    isCredit ? "border-success/30 bg-success/5" : "border-danger/30 bg-danger/5"
+                  }`}
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-sm font-medium text-muted">Net Premium</span>
+                    <span
+                      className={`text-xl font-semibold tabular-nums ${isCredit ? "text-success" : "text-danger"}`}
+                    >
+                      {netPremium >= 0 ? "+" : ""}${netPremium.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted mt-1">
+                    Credits (STO) − Debits (BTO) − Fees
+                  </p>
+                </div>
+              );
+            })()}
 
           {/* Common fields */}
           <div className="grid grid-cols-2 gap-4">
