@@ -7,7 +7,7 @@ export async function GET() {
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv",
-      "Content-Disposition": 'attachment; filename="wheeltracker-import-template.csv"',
+      "Content-Disposition": 'attachment; filename="journal-import-template.csv"',
     },
   });
 }

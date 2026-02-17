@@ -37,6 +37,8 @@ export const stockEntrySchema = z.object({
   occurredAt: z.string().datetime(),
   wheelCategory: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]).default("CORE"),
   notes: z.string().max(1000).optional(),
+  exitPrice: z.number().positive().optional(),
+  exitDateTime: z.string().datetime().optional(),
 });
 
 // ─── Manual Option Entry ────────────────────────────────────
@@ -73,6 +75,9 @@ export const optionEntrySchema = z.object({
   notes: z.string().max(1000).optional(),
   // Additional legs for multi-leg strategies
   additionalLegs: z.array(optionLegSchema).optional(),
+  // Optional exit when recording a full round-trip on add
+  exitPrice: z.number().min(0).optional(),
+  exitDateTime: z.string().datetime().optional(),
 });
 
 // ─── Reinvest Signal Action ─────────────────────────────────

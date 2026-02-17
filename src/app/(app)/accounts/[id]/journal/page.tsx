@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge, wheelCategoryBadgeVariant } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -24,6 +24,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import Link from "next/link";
+import { JournalCsvImport } from "@/components/JournalCsvImport";
 
 interface JournalTrade {
   id: string;
@@ -158,6 +159,7 @@ function deriveEntryType(trade: JournalTrade): JournalEntryType {
 
 export default function JournalPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const accountId = params.id as string;
   const [trades, setTrades] = useState<JournalTrade[]>([]);
   const [loading, setLoading] = useState(true);
@@ -175,6 +177,9 @@ export default function JournalPage() {
   // Delete confirmation state
   const [deleteTarget, setDeleteTarget] = useState<JournalTrade | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Symbol filter (underlyingId or "" for all)
+  const [symbolFilter, setSymbolFilter] = useState("");
 
   // Insights state
   const [showInsights, setShowInsights] = useState(false);
@@ -262,6 +267,20 @@ export default function JournalPage() {
     fetchTrades();
     fetchUnderlyings();
   }, [accountId]);
+
+  // Apply ?symbol= from URL (e.g. after adding a trade) once we can resolve it
+  const symbolFromUrl = searchParams.get("symbol");
+  useEffect(() => {
+    if (!symbolFromUrl?.trim()) return;
+    const sym = symbolFromUrl.trim().toUpperCase();
+    const fromUnderlyings = underlyings.find((u) => u.symbol === sym);
+    if (fromUnderlyings) {
+      setSymbolFilter(fromUnderlyings.id);
+      return;
+    }
+    const fromTrades = trades.find((t) => t.underlying.symbol === sym);
+    if (fromTrades) setSymbolFilter(fromTrades.underlyingId);
+  }, [symbolFromUrl, underlyings, trades]);
 
   // ── Open create modal ──────────────────────────────────────
 
@@ -409,20 +428,42 @@ export default function JournalPage() {
 
   // ── Tabs ───────────────────────────────────────────────────
 
+  const tabFromUrl = searchParams.get("tab") === "import" ? "import" : undefined;
   const tabs = [
     { id: "all", label: "All Trades" },
     { id: "stock", label: "Stock" },
     { id: "options", label: "Options" },
+    { id: "import", label: "Import" },
   ];
 
   const handleTabChange = (tabId: string) => {
+    if (tabId === "import") return;
     setLoading(true);
     fetchTrades(tabId === "all" ? undefined : tabId);
   };
 
-  // ── Metrics ────────────────────────────────────────────────
+  // ── Symbol filter (client-side) ───────────────────────────
 
-  const winners = trades.filter((t) => {
+  const symbolsInJournal = useMemo(() => {
+    const seen = new Set<string>();
+    return trades
+      .filter((t) => {
+        if (seen.has(t.underlyingId)) return false;
+        seen.add(t.underlyingId);
+        return true;
+      })
+      .map((t) => ({ id: t.underlyingId, symbol: t.underlying.symbol }))
+      .sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }, [trades]);
+
+  const filteredTrades = useMemo(() => {
+    if (!symbolFilter) return trades;
+    return trades.filter((t) => t.underlyingId === symbolFilter);
+  }, [trades, symbolFilter]);
+
+  // ── Metrics (based on filtered trades) ─────────────────────
+
+  const winners = filteredTrades.filter((t) => {
     if (!t.entryPrice || !t.exitPrice) return false;
     // Option trades: use nrop when available (includes fees)
     if (t.callPut && t.nrop != null) return t.nrop > 0;
@@ -432,7 +473,7 @@ export default function JournalPage() {
       ? parseFloat(t.exitPrice) < parseFloat(t.entryPrice)
       : parseFloat(t.exitPrice) > parseFloat(t.entryPrice);
   });
-  const winRate = trades.length > 0 ? (winners.length / trades.length) * 100 : 0;
+  const winRate = filteredTrades.length > 0 ? (winners.length / filteredTrades.length) * 100 : 0;
 
   // ── Modal title ────────────────────────────────────────────
 
@@ -662,10 +703,10 @@ export default function JournalPage() {
         </p>
       </ConfirmDialog>
 
-      {/* Metrics */}
+      {/* Metrics (reflect symbol filter) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
-          <p className="text-2xl font-bold">{trades.length}</p>
+          <p className="text-2xl font-bold">{filteredTrades.length}</p>
           <p className="text-xs text-muted">Total Trades</p>
         </Card>
         <Card>
@@ -677,7 +718,7 @@ export default function JournalPage() {
           <p className="text-xs text-muted">Win Rate</p>
         </Card>
         <Card>
-          <p className="text-2xl font-bold">{trades.length - winners.length}</p>
+          <p className="text-2xl font-bold">{filteredTrades.length - winners.length}</p>
           <p className="text-xs text-muted">Losers</p>
         </Card>
       </div>
@@ -955,26 +996,49 @@ export default function JournalPage() {
         )}
       </Card>
 
-      {/* Tabs + Trades */}
-      <Tabs tabs={tabs} onChange={handleTabChange}>
-        {() =>
-          loading ? (
-            <div className="animate-pulse space-y-3">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-20 bg-card rounded-lg" />
-              ))}
-            </div>
-          ) : trades.length === 0 ? (
-            <Card className="text-center py-8">
-              <p className="text-muted">No journal entries in this category.</p>
-            </Card>
-          ) : (() => {
-            type DisplayItem =
-              | { type: "single"; trade: JournalTrade }
-              | { type: "group"; strategyGroupId: string; strategyType: string; trades: JournalTrade[] };
-            const groupMap = new Map<string, JournalTrade[]>();
-            const singles: JournalTrade[] = [];
-            for (const t of trades) {
+      {/* Symbol filter */}
+      {symbolsInJournal.length > 0 && (
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted">Symbol:</span>
+          <Select
+            label=""
+            value={symbolFilter}
+            onChange={(e) => setSymbolFilter(e.target.value)}
+            options={[
+              { value: "", label: "All symbols" },
+              ...symbolsInJournal.map((u) => ({ value: u.id, label: u.symbol })),
+            ]}
+            className="w-[180px]"
+          />
+        </div>
+      )}
+
+      {/* Tabs + Trades / Import */}
+      <Tabs tabs={tabs} defaultTab={tabFromUrl} onChange={handleTabChange}>
+          {(activeTab) =>
+            activeTab === "import" ? (
+              <JournalCsvImport accountId={accountId} onCommitted={() => fetchTrades()} />
+            ) : loading ? (
+              <div className="animate-pulse space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="h-20 bg-card rounded-lg" />
+                ))}
+              </div>
+            ) : filteredTrades.length === 0 ? (
+              <Card className="text-center py-8">
+                <p className="text-muted">
+                  {symbolFilter
+                    ? "No journal entries for this symbol in this category."
+                    : "No journal entries in this category."}
+                </p>
+              </Card>
+            ) : (() => {
+              type DisplayItem =
+                | { type: "single"; trade: JournalTrade }
+                | { type: "group"; strategyGroupId: string; strategyType: string; trades: JournalTrade[] };
+              const groupMap = new Map<string, JournalTrade[]>();
+              const singles: JournalTrade[] = [];
+              for (const t of filteredTrades) {
               const gid = t.strategyGroupId;
               if (gid) {
                 if (!groupMap.has(gid)) groupMap.set(gid, []);
@@ -1013,9 +1077,7 @@ export default function JournalPage() {
               const target = trade.targetPrice ? parseFloat(trade.targetPrice) : null;
               const stop = trade.stopPrice ? parseFloat(trade.stopPrice) : null;
               let pnl: number | null = null;
-              if (isOption && trade.nrop != null) {
-                pnl = trade.nrop;
-              } else if (entry !== null && exit !== null) {
+              if (entry !== null && exit !== null) {
                 if (isOption) {
                   const premiumPnl = (isShort ? entry - exit : exit - entry) * qty * 100;
                   const fees = trade.fees ?? 0;
@@ -1023,6 +1085,8 @@ export default function JournalPage() {
                 } else {
                   pnl = (isShort ? -(exit - entry) : exit - entry) * qty;
                 }
+              } else if (isOption && trade.nrop != null) {
+                pnl = trade.nrop;
               }
               const isProfit = pnl !== null && pnl > 0;
               const potentialProfit =
@@ -1226,3 +1290,4 @@ export default function JournalPage() {
     </div>
   );
 }
+

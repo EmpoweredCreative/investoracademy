@@ -30,6 +30,8 @@ export async function POST(
       occurredAt: new Date(data.occurredAt),
       wheelCategory: data.wheelCategory,
       notes: data.notes,
+      exitPrice: data.exitPrice,
+      exitDateTime: data.exitDateTime ? new Date(data.exitDateTime) : undefined,
     });
 
     return NextResponse.json(result, { status: 201 });

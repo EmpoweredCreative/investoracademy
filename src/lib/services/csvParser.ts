@@ -55,7 +55,9 @@ export function parseCsv(content: string): CsvParseResult {
 }
 
 /**
- * Generate the canonical CSV template.
+ * Generate the canonical CSV template for journal/ledger import.
+ * Aligns with journal entry types: stock (BTO/STC) and options (STO/BTO/BTC/STC).
+ * Actions: BTO = Buy To Open, STO = Sell To Open, BTC = Buy To Close, STC = Sell To Close.
  */
 export function generateCsvTemplate(): string {
   const headers = [
@@ -74,7 +76,25 @@ export function generateCsvTemplate(): string {
     "notes",
   ];
 
-  const exampleRow = [
+  // Example 1: Stock purchase (BTO) — matches journal "Bought long stock"
+  const exampleStock = [
+    "My Account",
+    "2025-01-10T14:00:00Z",
+    "AAPL",
+    "STOCK",
+    "BTO",
+    "100",
+    "185.50",
+    "0",
+    "",
+    "",
+    "",
+    "EXT-001",
+    "Long stock position",
+  ];
+
+  // Example 2: Short put (STO) — matches journal "Sold put"
+  const exampleOption = [
     "My Account",
     "2025-01-15T10:30:00Z",
     "AAPL",
@@ -86,9 +106,9 @@ export function generateCsvTemplate(): string {
     "2025-02-21T00:00:00Z",
     "175.00",
     "PUT",
-    "TRD-001",
+    "TRD-002",
     "Short put on AAPL",
   ];
 
-  return [headers.join(","), exampleRow.join(",")].join("\n");
+  return [headers.join(","), exampleStock.join(","), exampleOption.join(",")].join("\n");
 }

@@ -61,21 +61,43 @@ interface WheelSlice {
 }
 
 /**
- * Compute capital-at-risk for open option positions by wheel category.
- * Used so Mad Money (and other categories) show risk allocated to options,
- * and Free Capital is reduced by that amount (cash is "reserved" against the risk).
+ * Compute capital-at-risk (buying power effect) for open option positions by wheel category.
+ * Reserves only the cash that would actually be at risk:
+ * - Spreads: reserve spread width only (e.g. bear call spread = 5 points = $500/contract).
+ * - Covered calls: reserve 0 when we own enough stock to deliver if assigned.
+ * - Iron condor/butterfly: put spread width + call spread width (call side 0 if covered by stock).
  */
 export async function calculateOptionRiskByCategory(accountId: string): Promise<{
   byCategory: Map<WheelCategory, Prisma.Decimal>;
   total: Prisma.Decimal;
 }> {
-  const openInstances = await prisma.strategyInstance.findMany({
-    where: { accountId, instrumentType: "OPTION", status: "OPEN" },
-    include: {
-      underlying: { include: { wheelClassification: true } },
-    },
-    orderBy: [{ strategyGroupId: "asc" }, { createdAt: "asc" }],
-  });
+  const [openInstances, stockLots] = await Promise.all([
+    prisma.strategyInstance.findMany({
+      where: { accountId, instrumentType: "OPTION", status: "OPEN" },
+      include: {
+        underlying: { include: { wheelClassification: true } },
+      },
+      orderBy: [{ strategyGroupId: "asc" }, { createdAt: "asc" }],
+    }),
+    prisma.stockLot.findMany({
+      where: { accountId, remaining: { not: 0 } },
+      select: { underlyingId: true, remaining: true },
+    }),
+  ]);
+
+  // Total shares owned per underlying (for covered-call check)
+  const sharesByUnderlying = new Map<string, Prisma.Decimal>();
+  for (const lot of stockLots) {
+    const current = sharesByUnderlying.get(lot.underlyingId) ?? new Prisma.Decimal(0);
+    sharesByUnderlying.set(lot.underlyingId, current.plus(lot.remaining));
+  }
+
+  const isShortCallCovered = (underlyingId: string, contractQty: Prisma.Decimal): boolean => {
+    const shares = sharesByUnderlying.get(underlyingId);
+    if (!shares) return false;
+    const sharesNeeded = contractQty.mul(OPTIONS_MULTIPLIER);
+    return shares.gte(sharesNeeded);
+  };
 
   const byCategory = new Map<WheelCategory, Prisma.Decimal>();
   (["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"] as WheelCategory[]).forEach((c) =>
@@ -139,21 +161,51 @@ export async function calculateOptionRiskByCategory(accountId: string): Promise<
         const puts = group.filter((x) => x.callPut === "PUT");
         const calls = group.filter((x) => x.callPut === "CALL");
         const shortPut = puts.find((x) => x.longShort === "SHORT");
+        const longPut = puts.find((x) => x.longShort === "LONG");
         const shortCall = calls.find((x) => x.longShort === "SHORT");
-        if (shortPut?.strike != null && shortCall?.strike != null) {
-          const putSide = shortPut.strike.mul(mult).mul(qty);
-          const callSide = shortCall.strike.mul(mult).mul(qty);
-          risk = putSide.plus(callSide);
-        } else {
-          risk = new Prisma.Decimal(0);
+        const longCall = calls.find((x) => x.longShort === "LONG");
+
+        let putSide = new Prisma.Decimal(0);
+        let callSide = new Prisma.Decimal(0);
+
+        if (shortPut?.strike != null) {
+          if (longPut?.strike != null) {
+            const putWidth = shortPut.strike.gt(longPut.strike)
+              ? shortPut.strike.minus(longPut.strike)
+              : longPut.strike.minus(shortPut.strike);
+            putSide = putWidth.mul(mult).mul(qty);
+          } else {
+            putSide = shortPut.strike.mul(mult).mul(qty);
+          }
         }
+
+        if (shortCall?.strike != null) {
+          const callCovered = inst.underlyingId ? isShortCallCovered(inst.underlyingId, qty) : false;
+          if (callCovered) {
+            callSide = new Prisma.Decimal(0);
+          } else if (longCall?.strike != null) {
+            const callWidth = longCall.strike.gt(shortCall.strike)
+              ? longCall.strike.minus(shortCall.strike)
+              : shortCall.strike.minus(longCall.strike);
+            callSide = callWidth.mul(mult).mul(qty);
+          } else {
+            callSide = shortCall.strike.mul(mult).mul(qty);
+          }
+        }
+
+        risk = putSide.plus(callSide);
       } else {
         risk = new Prisma.Decimal(0);
       }
 
       addRisk(category, risk);
     } else {
-      if (inst.longShort === "SHORT" && (inst.callPut === "PUT" || inst.callPut === "CALL")) {
+      // Standalone option
+      if (inst.strategyType === "COVERED_CALL") {
+        risk = new Prisma.Decimal(0);
+      } else if (inst.callPut === "CALL" && inst.longShort === "SHORT" && inst.underlyingId && isShortCallCovered(inst.underlyingId, qty)) {
+        risk = new Prisma.Decimal(0);
+      } else if (inst.longShort === "SHORT" && (inst.callPut === "PUT" || inst.callPut === "CALL")) {
         risk = (inst.strike ?? new Prisma.Decimal(0)).mul(mult).mul(qty);
       } else {
         risk = new Prisma.Decimal(0);

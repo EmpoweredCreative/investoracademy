@@ -5,8 +5,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
-  Briefcase,
-  Upload,
   PieChart,
   BookOpen,
   Microscope,
@@ -18,19 +16,21 @@ import {
   FileText,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
+import { useSelectedAccount } from "@/contexts/SelectedAccountContext";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/accounts", label: "Accounts", icon: Briefcase },
-  { href: "/import", label: "CSV Import", icon: Upload },
 ];
 
 const accountNavItems = [
   { href: "/statement", label: "Statement", icon: FileText },
   { href: "/wheel", label: "Wealth Wheel", icon: PieChart },
   { href: "/journal", label: "Journal", icon: BookOpen },
-  { href: "/research", label: "Research", icon: Microscope },
   { href: "/reinvest", label: "Reinvest", icon: RefreshCcw },
+];
+
+const tradersCornerNavItems = [
+  { href: "/research", label: "Research", icon: Microscope },
 ];
 
 interface Account {
@@ -39,14 +39,28 @@ interface Account {
   mode: string;
 }
 
+const isAccountsSection = (path: string) =>
+  path === "/accounts" || path.startsWith("/accounts/");
+
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const { selectedAccountId, setSelectedAccountId } = useSelectedAccount();
 
   const accountIdFromPath = pathname.match(/^\/accounts\/([^/]+)/)?.[1] ?? null;
-  const currentAccount = accountIdFromPath
-    ? accounts.find((a) => a.id === accountIdFromPath)
+
+  // When viewing an account page, sync selection to that account
+  useEffect(() => {
+    if (accountIdFromPath) {
+      setSelectedAccountId(accountIdFromPath);
+    }
+  }, [accountIdFromPath, setSelectedAccountId]);
+
+  // Effective account: from URL when on account pages, otherwise from selection
+  const effectiveAccountId = accountIdFromPath ?? selectedAccountId;
+  const currentAccount = effectiveAccountId
+    ? accounts.find((a) => a.id === effectiveAccountId)
     : null;
 
   useEffect(() => {
@@ -58,7 +72,15 @@ export default function Sidebar() {
 
   const handleAccountChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const id = e.target.value;
-    if (id) router.push(`/accounts/${id}`);
+    if (id) {
+      setSelectedAccountId(id);
+      // In Accounts section, navigate to that account; otherwise stay put (tools use selection)
+      if (isAccountsSection(pathname)) {
+        router.push(`/accounts/${id}`);
+      }
+    } else {
+      setSelectedAccountId(null);
+    }
   };
 
   return (
@@ -101,11 +123,20 @@ export default function Sidebar() {
       <nav className="flex-1 overflow-y-auto py-4 px-3">
         <div className="space-y-1">
           {navItems.map((item) => {
-            const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+            const isDashboard = item.href === "/dashboard";
+            const href =
+              isDashboard && effectiveAccountId
+                ? `/accounts/${effectiveAccountId}`
+                : item.href;
+            const isActive = isDashboard
+              ? effectiveAccountId !== null &&
+                (pathname === `/accounts/${effectiveAccountId}` ||
+                  pathname === `/accounts/${effectiveAccountId}/`)
+              : pathname === item.href || pathname.startsWith(item.href + "/");
             return (
               <Link
                 key={item.href}
-                href={item.href}
+                href={href}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   isActive
                     ? "bg-accent/10 text-accent"
@@ -126,11 +157,51 @@ export default function Sidebar() {
         </div>
         <div className="space-y-1">
           {accountNavItems.map((item) => {
-            const isActive = pathname.includes(item.href);
+            const tool = item.href.slice(1);
+            const isActive =
+              effectiveAccountId &&
+              (pathname === `/accounts/${effectiveAccountId}/${tool}` ||
+                pathname.startsWith(`/accounts/${effectiveAccountId}/${tool}/`));
+            const href = effectiveAccountId
+              ? `/accounts/${effectiveAccountId}/${tool}`
+              : `/accounts?tool=${tool}`;
             return (
               <Link
                 key={item.href}
-                href={`/accounts?tool=${item.href.slice(1)}`}
+                href={href}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  isActive
+                    ? "bg-accent/10 text-accent"
+                    : "text-muted hover:text-foreground hover:bg-card-hover"
+                }`}
+              >
+                <item.icon className="w-4.5 h-4.5" />
+                {item.label}
+                <ChevronRight className="w-3.5 h-3.5 ml-auto opacity-50" />
+              </Link>
+            );
+          })}
+        </div>
+
+        <div className="mt-6 mb-2 px-3">
+          <p className="text-xs font-semibold text-muted uppercase tracking-wider">
+            Trader&apos;s Corner
+          </p>
+        </div>
+        <div className="space-y-1">
+          {tradersCornerNavItems.map((item) => {
+            const tool = item.href.slice(1);
+            const isActive =
+              effectiveAccountId &&
+              (pathname === `/accounts/${effectiveAccountId}/${tool}` ||
+                pathname.startsWith(`/accounts/${effectiveAccountId}/${tool}/`));
+            const href = effectiveAccountId
+              ? `/accounts/${effectiveAccountId}/${tool}`
+              : `/accounts?tool=${tool}`;
+            return (
+              <Link
+                key={item.href}
+                href={href}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   isActive
                     ? "bg-accent/10 text-accent"

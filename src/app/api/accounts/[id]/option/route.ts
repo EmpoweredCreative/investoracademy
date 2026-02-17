@@ -39,6 +39,8 @@ export async function POST(
       wheelCategoryOverride: data.wheelCategoryOverride,
       notes: data.notes,
       additionalLegs: data.additionalLegs,
+      exitPrice: data.exitPrice,
+      exitDateTime: data.exitDateTime ? new Date(data.exitDateTime) : undefined,
     });
 
     return NextResponse.json(result, { status: 201 });

@@ -14,6 +14,9 @@ interface StockEntryInput {
   occurredAt: Date;
   wheelCategory: "CORE" | "MAD_MONEY" | "FREE_CAPITAL" | "RISK_MGMT";
   notes?: string;
+  /** When recording a full round-trip: exit price (sell if entry was BUY, buy to cover if SELL). */
+  exitPrice?: number;
+  exitDateTime?: Date;
 }
 
 interface OptionLegInput {
@@ -42,6 +45,9 @@ interface OptionEntryInput {
   wheelCategoryOverride?: "CORE" | "MAD_MONEY" | "FREE_CAPITAL" | "RISK_MGMT";
   notes?: string;
   additionalLegs?: OptionLegInput[];
+  /** When recording a full round-trip: exit price (e.g. BTC/STC price). */
+  exitPrice?: number;
+  exitDateTime?: Date;
 }
 
 /**
@@ -122,7 +128,7 @@ export async function processStockEntry(input: StockEntryInput) {
     });
 
     // Auto-create a journal trade so the entry appears in the Journal
-    await tx.journalTrade.create({
+    const journalTrade = await tx.journalTrade.create({
       data: {
         accountId: input.accountId,
         underlyingId: underlying.id,
@@ -142,6 +148,64 @@ export async function processStockEntry(input: StockEntryInput) {
     } else {
       // Stock sale: add proceeds - fees
       await adjustCashBalance(tx, input.accountId, totalAmount.minus(input.fees));
+    }
+
+    // Optional: record exit in same flow (full round-trip)
+    if (input.exitPrice != null && input.exitPrice > 0) {
+      const exitDate = input.exitDateTime ?? new Date();
+      if (input.action === "BUY") {
+        // Entry was buy → exit is sell
+        await consumeStockLots(
+          {
+            accountId: input.accountId,
+            underlyingId: underlying.id,
+            quantity: input.quantity,
+            sellPrice: input.exitPrice,
+          },
+          tx
+        );
+        const exitProceeds = new Prisma.Decimal(input.exitPrice).mul(input.quantity);
+        await tx.ledgerEntry.create({
+          data: {
+            accountId: input.accountId,
+            type: LedgerType.STOCK_SELL,
+            amount: exitProceeds,
+            occurredAt: exitDate,
+            description: `SELL ${input.quantity} ${input.symbol} @ $${input.exitPrice}`,
+          },
+        });
+        await adjustCashBalance(tx, input.accountId, exitProceeds);
+      } else {
+        // Entry was sell (short) → exit is buy to cover
+        const coverCost = new Prisma.Decimal(input.exitPrice).mul(input.quantity);
+        await createStockLot(
+          {
+            accountId: input.accountId,
+            underlyingId: underlying.id,
+            quantity: input.quantity,
+            costBasis: coverCost.toNumber(),
+            acquiredAt: exitDate,
+          },
+          tx
+        );
+        await tx.ledgerEntry.create({
+          data: {
+            accountId: input.accountId,
+            type: LedgerType.STOCK_BUY,
+            amount: coverCost,
+            occurredAt: exitDate,
+            description: `BUY ${input.quantity} ${input.symbol} @ $${input.exitPrice}`,
+          },
+        });
+        await adjustCashBalance(tx, input.accountId, coverCost.neg());
+      }
+      await tx.journalTrade.update({
+        where: { id: journalTrade.id },
+        data: {
+          exitPrice: new Prisma.Decimal(input.exitPrice),
+          exitDateTime: exitDate,
+        },
+      });
     }
 
     return ledgerEntry;
@@ -196,8 +260,42 @@ export async function processOptionEntry(input: OptionEntryInput) {
       });
       instanceId = instance.id;
 
+      // Opening premium ledger entry (STO = credit/received, BTO = debit/paid)
+      const openingLedgerType =
+        input.action === "STO" ? LedgerType.PREMIUM_CREDIT : LedgerType.PREMIUM_DEBIT;
+      await tx.ledgerEntry.create({
+        data: {
+          accountId: input.accountId,
+          strategyInstanceId: instanceId,
+          type: openingLedgerType,
+          amount: totalAmount,
+          occurredAt: input.occurredAt,
+          description: `${input.action} ${input.quantity}x ${input.symbol} $${input.strike} ${input.callPut} @ $${input.price}`,
+        },
+      });
+      if (input.action === "STO") {
+        await adjustCashBalance(tx, input.accountId, totalAmount);
+      } else {
+        await adjustCashBalance(tx, input.accountId, totalAmount.neg());
+      }
+
+      // Fee entry if applicable
+      const feesAmount = input.fees ?? 0;
+      if (feesAmount > 0) {
+        await tx.ledgerEntry.create({
+          data: {
+            accountId: input.accountId,
+            strategyInstanceId: instanceId,
+            type: LedgerType.FEE,
+            amount: new Prisma.Decimal(feesAmount),
+            occurredAt: input.occurredAt,
+            description: `Fee for ${input.action} ${input.symbol}`,
+          },
+        });
+      }
+
       // Auto-create a journal trade so the entry appears in the Journal
-      await tx.journalTrade.create({
+      const primaryJournalTrade = await tx.journalTrade.create({
         data: {
           accountId: input.accountId,
           underlyingId: underlying.id,
@@ -213,6 +311,54 @@ export async function processOptionEntry(input: OptionEntryInput) {
           thesisNotes: input.notes ?? `${input.action} ${input.quantity}x ${input.symbol} $${input.strike} ${input.callPut} @ $${input.price}`,
         },
       });
+
+      // Optional: record exit in same flow (full round-trip)
+      if (input.exitPrice != null && input.exitPrice > 0) {
+        const exitDate = input.exitDateTime ?? new Date();
+        const closeAction = input.action === "STO" ? "BTC" : "STC";
+        const exitAmount = new Prisma.Decimal(input.exitPrice).mul(input.quantity).mul(100);
+        const exitLedgerType = closeAction === "STC" ? LedgerType.PREMIUM_CREDIT : LedgerType.PREMIUM_DEBIT;
+        await tx.ledgerEntry.create({
+          data: {
+            accountId: input.accountId,
+            strategyInstanceId: instanceId,
+            type: exitLedgerType,
+            amount: exitAmount,
+            occurredAt: exitDate,
+            description: `${closeAction} ${input.quantity}x ${input.symbol} $${input.strike} ${input.callPut} @ $${input.exitPrice}`,
+          },
+        });
+        if (closeAction === "STC") {
+          await adjustCashBalance(tx, input.accountId, exitAmount);
+        } else {
+          await adjustCashBalance(tx, input.accountId, exitAmount.neg());
+        }
+        const entries = await tx.ledgerEntry.findMany({
+          where: { strategyInstanceId: instanceId },
+        });
+        let nrop = new Prisma.Decimal(0);
+        for (const entry of entries) {
+          if (entry.type === LedgerType.PREMIUM_CREDIT) nrop = nrop.plus(entry.amount);
+          else if (entry.type === LedgerType.PREMIUM_DEBIT) nrop = nrop.minus(entry.amount);
+          else if (entry.type === LedgerType.FEE) nrop = nrop.minus(entry.amount);
+        }
+        await tx.strategyInstance.update({
+          where: { id: instanceId },
+          data: {
+            status: "FINALIZED",
+            finalizationReason: "CLOSED",
+            finalizedAt: exitDate,
+            realizedOptionProfit: nrop,
+          },
+        });
+        await tx.journalTrade.update({
+          where: { id: primaryJournalTrade.id },
+          data: {
+            exitPrice: new Prisma.Decimal(input.exitPrice),
+            exitDateTime: exitDate,
+          },
+        });
+      }
     } else {
       // Find matching open instance
       const openInstance = await tx.strategyInstance.findFirst({

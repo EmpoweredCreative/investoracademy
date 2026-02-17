@@ -22,6 +22,8 @@ export default function StockEntryPage() {
   const [occurredAt, setOccurredAt] = useState(
     new Date().toISOString().slice(0, 16)
   );
+  const [exitPrice, setExitPrice] = useState("");
+  const [exitDateTime, setExitDateTime] = useState("");
   const [wheelCategory, setWheelCategory] = useState("CORE");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
@@ -46,6 +48,8 @@ export default function StockEntryPage() {
           occurredAt: new Date(occurredAt).toISOString(),
           wheelCategory,
           notes: notes || undefined,
+          exitPrice: exitPrice ? parseFloat(exitPrice) : undefined,
+          exitDateTime: exitDateTime ? new Date(exitDateTime).toISOString() : undefined,
         }),
       });
 
@@ -58,8 +62,7 @@ export default function StockEntryPage() {
 
       setSuccess(true);
       setTimeout(() => {
-        // Use window.location for a full page load so portfolio data is fresh
-        window.location.href = `/accounts/${accountId}`;
+        router.push(`/accounts/${accountId}/journal?symbol=${encodeURIComponent(symbol)}`);
       }, 1500);
     } catch {
       setError("Something went wrong");
@@ -171,6 +174,31 @@ export default function StockEntryPage() {
                 { value: "RISK_MGMT", label: "Risk Management" },
               ]}
             />
+          </div>
+
+          {/* Optional exit (full round-trip in one form) */}
+          <div className="rounded-lg border border-border border-dashed p-4 space-y-3">
+            <p className="text-sm font-medium text-muted">Exit (optional)</p>
+            <p className="text-xs text-muted">
+              Add exit price and date if this trade is already closed (e.g. sold if you bought, or bought to cover if you sold). Leave blank to record entry only.
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              <Input
+                label="Exit price"
+                type="number"
+                value={exitPrice}
+                onChange={(e) => setExitPrice(e.target.value)}
+                placeholder="e.g. 155.00"
+                min="0.01"
+                step="0.01"
+              />
+              <Input
+                label="Exit date & time"
+                type="datetime-local"
+                value={exitDateTime}
+                onChange={(e) => setExitDateTime(e.target.value)}
+              />
+            </div>
           </div>
 
           <Input

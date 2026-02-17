@@ -142,6 +142,8 @@ export default function OptionEntryPage() {
   const [occurredAt, setOccurredAt] = useState(
     new Date().toISOString().slice(0, 16)
   );
+  const [exitPrice, setExitPrice] = useState("");
+  const [exitDateTime, setExitDateTime] = useState("");
   const [premiumPolicy, setPremiumPolicy] = useState("");
   const [wheelCategory, setWheelCategory] = useState("CORE");
   const [notes, setNotes] = useState("");
@@ -196,6 +198,8 @@ export default function OptionEntryPage() {
         premiumPolicyOverride: premiumPolicy || undefined,
         wheelCategoryOverride: wheelCategory || undefined,
         notes: notes || undefined,
+        exitPrice: exitPrice ? parseFloat(exitPrice) : undefined,
+        exitDateTime: exitDateTime ? new Date(exitDateTime).toISOString() : undefined,
       };
 
       // Additional legs
@@ -225,7 +229,7 @@ export default function OptionEntryPage() {
 
       setSuccess(true);
       setTimeout(() => {
-        router.push(`/accounts/${accountId}`);
+        router.push(`/accounts/${accountId}/journal?symbol=${encodeURIComponent(symbol)}`);
       }, 1500);
     } catch {
       setError("Something went wrong");
@@ -407,6 +411,31 @@ export default function OptionEntryPage() {
               onChange={(e) => setOccurredAt(e.target.value)}
               required
             />
+          </div>
+
+          {/* Optional exit (full round-trip in one form) */}
+          <div className="rounded-lg border border-border border-dashed p-4 space-y-3">
+            <p className="text-sm font-medium text-muted">Exit (optional)</p>
+            <p className="text-xs text-muted">
+              Add exit price and date if this trade is already closed. Leave blank to record entry only.
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              <Input
+                label="Exit price"
+                type="number"
+                value={exitPrice}
+                onChange={(e) => setExitPrice(e.target.value)}
+                placeholder="e.g. 0.10"
+                min="0"
+                step="0.01"
+              />
+              <Input
+                label="Exit date & time"
+                type="datetime-local"
+                value={exitDateTime}
+                onChange={(e) => setExitDateTime(e.target.value)}
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

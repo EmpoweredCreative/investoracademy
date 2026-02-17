@@ -202,6 +202,7 @@ export default function AccountDetailPage() {
   const [depositError, setDepositError] = useState<string | null>(null);
 
   const openCashEdit = () => {
+    // Edit total cash to match broker (e.g. Cash & Sweep Vehicle)
     setCashForm({
       cashBalance: account ? parseFloat(account.cashBalance).toString() : "0",
       cashflowReserve: account ? parseFloat(account.cashflowReserve).toString() : "0",
@@ -676,7 +677,7 @@ export default function AccountDetailPage() {
           { href: `/accounts/${accountId}/journal`, icon: BookOpen, label: "Journal", color: "text-accent" },
           { href: `/accounts/${accountId}/research`, icon: Microscope, label: "Research", color: "text-warning" },
           { href: `/accounts/${accountId}/reinvest`, icon: RefreshCcw, label: "Reinvest", color: "text-success" },
-          { href: `/import`, icon: Upload, label: "CSV Import", color: "text-muted" },
+          { href: `/accounts/${accountId}/journal?tab=import`, icon: Upload, label: "CSV Import", color: "text-muted" },
         ].map((item) => (
           <Link key={item.href} href={item.href}>
             <Card className="hover:border-accent/30 transition-all text-center py-4">
@@ -693,13 +694,31 @@ export default function AccountDetailPage() {
           <p className="text-2xl font-bold">
             ${totalAccountValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </p>
-          <p className="text-xs text-muted">Total Account Value</p>
+          <p className="text-xs text-muted flex items-center gap-1">
+            Total Account Value
+            <span
+              className="text-muted hover:text-foreground cursor-help"
+              title="Cash balance + cashflow reserve + cost basis of all positions. This uses your entered cost basis, not market value, so it may differ from your broker's net liquidation value."
+              aria-label="Total account value info"
+            >
+              <Info className="w-3.5 h-3.5 shrink-0" />
+            </span>
+          </p>
         </Card>
         <Card>
           <p className="text-2xl font-bold">
             ${(summary?.totalCostBasis ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </p>
-          <p className="text-xs text-muted">Invested (Cost Basis)</p>
+          <p className="text-xs text-muted flex items-center gap-1">
+            Invested (Cost Basis)
+            <span
+              className="text-muted hover:text-foreground cursor-help"
+              title="Sum of what you paid for your stock and option positions (after premium reductions). Used for tracking performance, not current market value."
+              aria-label="Invested cost basis info"
+            >
+              <Info className="w-3.5 h-3.5 shrink-0" />
+            </span>
+          </p>
         </Card>
         <Card>
           <p className="text-2xl font-bold">{positions.length}</p>
@@ -716,7 +735,16 @@ export default function AccountDetailPage() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <DollarSign className="w-5 h-5 text-success" />
-            <h2 className="text-lg font-semibold">Cash Balances</h2>
+            <h2 className="text-lg font-semibold flex items-center gap-1">
+              Cash Balances
+              <span
+                className="text-muted hover:text-foreground cursor-help"
+                title="Total cash should match your broker statement (e.g. Cash & Sweep Vehicle). Free cash is total minus amount reserved for open options. Cashflow reserve is cash set aside for income."
+                aria-label="Cash balances info"
+              >
+                <Info className="w-4 h-4 shrink-0" />
+              </span>
+            </h2>
           </div>
           <div className="flex items-center gap-1">
             {account.onboardingCompletedAt && !editingCash && (
@@ -772,13 +800,12 @@ export default function AccountDetailPage() {
               }}
             >
               <Input
-                label="Free Cash"
+                label="Cash balance (total)"
                 type="number"
-                min="0"
                 step="0.01"
                 value={cashForm.cashBalance}
                 onChange={(e) => setCashForm((f) => ({ ...f, cashBalance: e.target.value }))}
-                hint="Total uninvested cash in the account"
+                hint="Match your broker statement (e.g. Cash & Sweep Vehicle)"
               />
               <Input
                 label="Cashflow Reserve"
@@ -801,9 +828,10 @@ export default function AccountDetailPage() {
                 const totalCash = parseFloat(account.cashBalance);
                 const reserved = summary?.optionRiskTotal ?? 0;
                 const freeCash = totalCash - reserved;
+                const isNegative = freeCash < 0;
                 return (
                   <>
-                    <p className="text-2xl font-bold text-success">
+                    <p className={`text-2xl font-bold ${isNegative ? "text-danger" : "text-success"}`}>
                       ${freeCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </p>
                     <p className="text-xs text-muted mt-1">Free Cash</p>

@@ -12,6 +12,7 @@ import { PlusCircle, ArrowRight, X, Archive, AlertTriangle } from "lucide-react"
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 const TOOL_LABELS: Record<string, string> = {
+  statement: "Statement",
   wheel: "Wealth Wheel",
   journal: "Journal",
   research: "Research",
