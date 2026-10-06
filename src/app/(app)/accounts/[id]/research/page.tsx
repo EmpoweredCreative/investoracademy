@@ -11,6 +11,7 @@ import { Select } from "@/components/ui/Select";
 import { Tabs } from "@/components/ui/Tabs";
 import { ArrowLeft, PlusCircle, X, Info, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import Link from "next/link";
+import { BUCKET_OPTIONS } from "@/lib/buckets";
 
 // ─── Types ──────────────────────────────────────────────────
 interface ResearchIdea {
@@ -1567,8 +1568,8 @@ export default function ResearchPage() {
             </Button>
           </Link>
           <div>
-            <h1 className="text-2xl font-bold">Theta Research</h1>
-            <p className="text-muted text-sm">Research and plan options strategies</p>
+            <h1 className="text-2xl font-bold">Trade Research</h1>
+            <p className="text-muted text-sm">Plan and evaluate options strategies</p>
           </div>
         </div>
         <Button size="sm" onClick={openNewModal}>
@@ -1638,12 +1639,7 @@ export default function ResearchPage() {
                   label="Wheel Category"
                   value={form.wheelCategoryOverride}
                   onChange={(e) => setField("wheelCategoryOverride", e.target.value)}
-                  options={[
-                    { value: "CORE", label: "Core" },
-                    { value: "MAD_MONEY", label: "Mad Money" },
-                    { value: "FREE_CAPITAL", label: "Free Capital" },
-                    { value: "RISK_MGMT", label: "Risk Mgmt" },
-                  ]}
+                  options={BUCKET_OPTIONS}
                 />
                 <div />
               </div>

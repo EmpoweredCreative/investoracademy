@@ -12,7 +12,9 @@
     "db:push": "npx prisma db push",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:studio": "npx prisma studio",
-    "db:reset": "npx prisma migrate reset --force"
+    "db:reset": "npx prisma migrate reset --force",
+    "test": "vitest run",
+    "dev:https": "next dev --experimental-https --hostname 127.0.0.1"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
@@ -29,6 +31,7 @@
     "lucide-react": "^0.563.0",
     "next": "16.1.6",
     "next-auth": "^5.0.0-beta.30",
+    "openai": "^6.22.0",
     "pg": "^8.18.0",
     "prisma": "^7.4.0",
     "react": "19.2.3",
@@ -47,6 +50,7 @@
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
   }
 }

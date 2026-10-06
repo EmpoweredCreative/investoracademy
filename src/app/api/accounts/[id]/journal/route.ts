@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { DEFAULT_BUCKET } from "@/lib/buckets";
 import { requireAuth, handleApiError } from "@/lib/api-helpers";
 import { journalTradeSchema } from "@/lib/validations";
-import { applyBasisReduction, consumeStockLots, createStockLot } from "@/lib/services/fifoLots";
+import { consumeStockLots, createStockLot } from "@/lib/services/fifoLots";
+import { reverseSettlement, settleOptionInstance } from "@/lib/services/premiumSettlement";
 import { adjustCashBalance } from "@/lib/services/cashTracker";
+import { getEnvironmentSnapshotForTrade } from "@/lib/services/disciplineEngine";
 
 export async function GET(
   req: NextRequest,
@@ -52,7 +55,7 @@ export async function GET(
       const effectiveCategory =
         trade.wheelCategoryOverride ??
         trade.underlying.wheelClassification?.category ??
-        "MAD_MONEY";
+        DEFAULT_BUCKET;
 
       let fees = 0;
       let premiumReceived = 0;
@@ -109,6 +112,11 @@ export async function POST(
     const data = journalTradeSchema.parse(body);
     const { fees = 0, ...journalData } = data;
 
+    const envSnapshot = await getEnvironmentSnapshotForTrade(
+      accountId,
+      journalData.entryDateTime ?? null
+    );
+
     const trade = await prisma.$transaction(async (tx) => {
       // Create the journal trade (fees not stored on JournalTrade; used for LedgerEntry)
       const journalTrade = await tx.journalTrade.create({
@@ -118,6 +126,10 @@ export async function POST(
           strike: journalData.strike ?? undefined,
           entryDateTime: journalData.entryDateTime ? new Date(journalData.entryDateTime) : undefined,
           exitDateTime: journalData.exitDateTime ? new Date(journalData.exitDateTime) : undefined,
+          marketEnvironmentAtEntry: envSnapshot.marketEnvironmentAtEntry,
+          environmentScoreAtEntry: envSnapshot.environmentScoreAtEntry,
+          humanAIAlignmentAtEntry: envSnapshot.humanAIAlignmentAtEntry,
+          routineCompletedAtEntry: envSnapshot.routineCompletedAtEntry,
         },
       });
 
@@ -269,19 +281,11 @@ export async function PATCH(
                 },
               });
             }
-            const allEntries = await tx.ledgerEntry.findMany({
-              where: { strategyInstanceId: instance.id },
-            });
-            let nrop = new Prisma.Decimal(0);
-            for (const entry of allEntries) {
-              if (entry.type === "PREMIUM_CREDIT") nrop = nrop.plus(entry.amount);
-              else if (entry.type === "PREMIUM_DEBIT") nrop = nrop.minus(entry.amount);
-              else if (entry.type === "FEE") nrop = nrop.minus(entry.amount);
-            }
             if (instance.status === "FINALIZED") {
-              await tx.strategyInstance.update({
-                where: { id: instance.id },
-                data: { realizedOptionProfit: nrop },
+              await settleOptionInstance(tx, {
+                instanceId: instance.id,
+                reason: instance.finalizationReason ?? "CLOSED",
+                finalizedAt: instance.finalizedAt ?? new Date(),
               });
             }
           }
@@ -342,35 +346,7 @@ export async function PATCH(
             });
           }
 
-          // Calculate NROP from all ledger entries
-          const allEntries = await tx.ledgerEntry.findMany({
-            where: { strategyInstanceId: instance.id },
-          });
-          let nrop = new Prisma.Decimal(0);
-          for (const entry of allEntries) {
-            if (entry.type === "PREMIUM_CREDIT") nrop = nrop.plus(entry.amount);
-            else if (entry.type === "PREMIUM_DEBIT") nrop = nrop.minus(entry.amount);
-            else if (entry.type === "FEE") nrop = nrop.minus(entry.amount);
-          }
-
-          // Finalize the strategy instance
-          await tx.strategyInstance.update({
-            where: { id: instance.id },
-            data: {
-              status: "FINALIZED",
-              finalizationReason: "CLOSED",
-              finalizedAt: exitDate,
-              realizedOptionProfit: nrop,
-            },
-          });
-
-          // Apply basis reduction for profitable trades
-          if (nrop.greaterThan(0)) {
-            await applyBasisReduction(
-              { accountId, underlyingId: existing.underlyingId, premiumAmount: nrop },
-              tx
-            );
-          }
+          await settleOptionInstance(tx, { instanceId: instance.id, reason: "CLOSED", finalizedAt: exitDate });
 
           // Deduct exit premium from cash (BTC = paying premium)
           if (exitPrice > 0) {
@@ -417,35 +393,7 @@ export async function PATCH(
             });
           }
 
-          // Calculate NROP from all ledger entries (CREDIT - DEBIT - FEE)
-          const allEntries = await tx.ledgerEntry.findMany({
-            where: { strategyInstanceId: instance.id },
-          });
-          let nrop = new Prisma.Decimal(0);
-          for (const entry of allEntries) {
-            if (entry.type === "PREMIUM_CREDIT") nrop = nrop.plus(entry.amount);
-            else if (entry.type === "PREMIUM_DEBIT") nrop = nrop.minus(entry.amount);
-            else if (entry.type === "FEE") nrop = nrop.minus(entry.amount);
-          }
-
-          // Finalize the strategy instance
-          await tx.strategyInstance.update({
-            where: { id: instance.id },
-            data: {
-              status: "FINALIZED",
-              finalizationReason: "CLOSED",
-              finalizedAt: exitDate,
-              realizedOptionProfit: nrop,
-            },
-          });
-
-          // Apply basis reduction for profitable trades (matches Case B behavior)
-          if (nrop.greaterThan(0)) {
-            await applyBasisReduction(
-              { accountId, underlyingId: existing.underlyingId, premiumAmount: nrop },
-              tx
-            );
-          }
+          await settleOptionInstance(tx, { instanceId: instance.id, reason: "CLOSED", finalizedAt: exitDate });
 
           // Add sale proceeds to cash (STC = receive premium minus fees)
           if (exitPrice > 0) {
@@ -468,20 +416,7 @@ export async function PATCH(
         });
 
         if (instance && instance.status === "FINALIZED") {
-          // Reverse basis reduction if NROP was positive
-          if (instance.realizedOptionProfit) {
-            const oldNrop = parseFloat(instance.realizedOptionProfit.toString());
-            if (oldNrop > 0) {
-              await applyBasisReduction(
-                {
-                  accountId,
-                  underlyingId: existing.underlyingId,
-                  premiumAmount: new Prisma.Decimal(oldNrop).neg(),
-                },
-                tx
-              );
-            }
-          }
+          await reverseSettlement(tx, instance.id);
 
           // Delete closing PREMIUM_DEBIT ledger entries
           await tx.ledgerEntry.deleteMany({
@@ -527,20 +462,7 @@ export async function PATCH(
         });
 
         if (instance && instance.status === "FINALIZED") {
-          // Reverse basis reduction if NROP was positive
-          if (instance.realizedOptionProfit) {
-            const oldNrop = parseFloat(instance.realizedOptionProfit.toString());
-            if (oldNrop > 0) {
-              await applyBasisReduction(
-                {
-                  accountId,
-                  underlyingId: existing.underlyingId,
-                  premiumAmount: new Prisma.Decimal(oldNrop).neg(),
-                },
-                tx
-              );
-            }
-          }
+          await reverseSettlement(tx, instance.id);
 
           // Delete only the STC closing PREMIUM_CREDIT (don't remove other credits e.g. from rolls)
           await tx.ledgerEntry.deleteMany({
@@ -732,25 +654,9 @@ export async function DELETE(
 
     // Use a transaction to delete everything atomically
     await prisma.$transaction(async (tx) => {
-      // 0. Undo basis reduction for finalized option instances with positive NROP
-      if (instanceIdsToDelete.length > 0) {
-        const instances = await tx.strategyInstance.findMany({
-          where: { id: { in: instanceIdsToDelete }, status: "FINALIZED" },
-          select: { underlyingId: true, realizedOptionProfit: true },
-        });
-        for (const inst of instances) {
-          if (inst.realizedOptionProfit && parseFloat(inst.realizedOptionProfit.toString()) > 0) {
-            // Reverse the basis reduction by applying a negative amount
-            await applyBasisReduction(
-              {
-                accountId,
-                underlyingId: inst.underlyingId,
-                premiumAmount: new Prisma.Decimal(inst.realizedOptionProfit.toString()).neg(),
-              },
-              tx
-            );
-          }
-        }
+      // 0. Undo premium bucket routing (basis reduction, reinvest signals) for these instances
+      for (const instanceId of instanceIdsToDelete) {
+        await reverseSettlement(tx, instanceId);
       }
 
       // 0b. Reverse cash impact of ledger entries being deleted
@@ -902,34 +808,12 @@ async function createOptionFinancials(
     });
   }
 
-  // Compute NROP and finalize if closed (CREDIT - DEBIT - FEE)
   if (isClosed) {
-    const allEntries = await tx.ledgerEntry.findMany({
-      where: { strategyInstanceId: instance.id },
+    await settleOptionInstance(tx, {
+      instanceId: instance.id,
+      reason: "CLOSED",
+      finalizedAt: data.exitDateTime ? new Date(data.exitDateTime) : new Date(),
     });
-    let nrop = new Prisma.Decimal(0);
-    for (const entry of allEntries) {
-      if (entry.type === "PREMIUM_CREDIT") nrop = nrop.plus(entry.amount);
-      else if (entry.type === "PREMIUM_DEBIT") nrop = nrop.minus(entry.amount);
-      else if (entry.type === "FEE") nrop = nrop.minus(entry.amount);
-    }
-
-    await tx.strategyInstance.update({
-      where: { id: instance.id },
-      data: { realizedOptionProfit: nrop },
-    });
-
-    // Apply premium as basis reduction to stock lots for the underlying
-    if (nrop.greaterThan(0)) {
-      await applyBasisReduction(
-        {
-          accountId,
-          underlyingId: data.underlyingId,
-          premiumAmount: nrop,
-        },
-        tx
-      );
-    }
   }
 
   // Link journal trade to strategy instance

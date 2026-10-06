@@ -2,7 +2,7 @@ import { LedgerType, InstrumentType, OptionAction, StockAction, Prisma } from "@
 import { prisma } from "@/lib/db";
 import { DedupeResult } from "./dedupeEngine";
 import { createStockLot, consumeStockLots } from "./fifoLots";
-import { finalizeInstance } from "./instanceFinalizer";
+import { settleOptionInstance } from "./premiumSettlement";
 
 /**
  * Map an action string to a LedgerType.
@@ -252,16 +252,7 @@ export async function commitImport(
         if (isFinalizingAction(action)) {
           const reason = mapFinalizationReason(action);
           if (reason) {
-            // We do this outside the transaction since finalizeInstance has its own
-            // For now, just update directly
-            await tx.strategyInstance.update({
-              where: { id: instanceId },
-              data: {
-                status: "FINALIZED",
-                finalizationReason: reason,
-                finalizedAt: occurredAt,
-              },
-            });
+            await settleOptionInstance(tx, { instanceId, reason, finalizedAt: occurredAt });
           }
         }
       }

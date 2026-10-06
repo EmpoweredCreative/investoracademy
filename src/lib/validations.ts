@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { bucketSchema, CORE_PLAN_MODES } from "@/lib/buckets";
 
 // ─── Auth ───────────────────────────────────────────────────
 export const loginSchema = z.object({
@@ -35,7 +36,7 @@ export const stockEntrySchema = z.object({
   price: z.number().positive(),
   fees: z.number().min(0).default(0),
   occurredAt: z.string().datetime(),
-  wheelCategory: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]).default("CORE"),
+  wheelCategory: bucketSchema.default("CORE"),
   notes: z.string().max(1000).optional(),
   exitPrice: z.number().positive().optional(),
   exitDateTime: z.string().datetime().optional(),
@@ -71,7 +72,7 @@ export const optionEntrySchema = z.object({
     "LEAP_CALL", "LEAP_PUT",
   ]).optional(),
   premiumPolicyOverride: z.enum(["CASHFLOW", "BASIS_REDUCTION", "REINVEST_ON_CLOSE"]).optional(),
-  wheelCategoryOverride: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]).optional(),
+  wheelCategoryOverride: bucketSchema.optional(),
   notes: z.string().max(1000).optional(),
   // Additional legs for multi-leg strategies
   additionalLegs: z.array(optionLegSchema).optional(),
@@ -91,7 +92,7 @@ export const reinvestActionSchema = z.object({
 export const wheelTargetSchema = z.object({
   targets: z.array(
     z.object({
-      category: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]),
+      category: bucketSchema,
       targetPct: z.number().min(0).max(100),
     })
   ).refine(
@@ -105,7 +106,7 @@ export const wheelTargetSchema = z.object({
 
 export const wheelClassificationSchema = z.object({
   underlyingId: z.string(),
-  category: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]),
+  category: bucketSchema,
 });
 
 // ─── Journal Trade ──────────────────────────────────────────
@@ -128,7 +129,7 @@ export const journalTradeSchema = z.object({
   riskPct: z.number().nullable().optional(),
   thesisNotes: z.string().max(5000).nullable().optional(),
   outcomeRating: z.enum(["EXCELLENT", "GOOD", "NEUTRAL", "POOR", "TERRIBLE"]).nullable().optional(),
-  wheelCategoryOverride: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]).nullable().optional(),
+  wheelCategoryOverride: bucketSchema.nullable().optional(),
 });
 
 // ─── Research Idea ──────────────────────────────────────────
@@ -159,7 +160,7 @@ export const researchIdeaSchema = z.object({
   roi: z.number().optional(),
   roid: z.number().optional(),
   notes: z.string().max(5000).optional(),
-  wheelCategoryOverride: z.enum(["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"]).optional(),
+  wheelCategoryOverride: bucketSchema.optional(),
 
   // Strategy-specific typed fields
   price: z.number().positive().optional(),
@@ -190,6 +191,49 @@ export const depositSchema = z.object({
   notes: z.string().max(500).optional(),
 });
 
+// ─── Market Command Center ──────────────────────────────────
+export const marketBiasEnum = z.enum(["BULLISH", "BEARISH", "NEUTRAL"]);
+export const volatilityConditionEnum = z.enum(["EXPANDING", "CONTRACTING", "ELEVATED", "COMPRESSED"]);
+export const breadthConditionEnum = z.enum(["BROAD", "NARROW", "MIXED"]);
+export const aiMaStatusEnum = z.enum(["ABOVE_200", "BELOW_200", "MIXED"]);
+export const aiVolumeConditionEnum = z.enum(["ACCUMULATION", "DISTRIBUTION", "NEUTRAL"]);
+export const chartSourceTypeEnum = z.enum(["CHART_UPLOAD", "DATA_FEED"]);
+
+export const symbolBiasSchema = z.object({
+  symbol: z.string().min(1).max(20).transform((s) => s.toUpperCase()),
+  category: z.enum(["INDICES", "SECTORS"]),
+  bias: marketBiasEnum.nullable().optional(),
+  dailyVolume: z.number().min(0).nullable().optional(),
+});
+
+export const marketRoutineEntrySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  humanMarketBias: marketBiasEnum.nullable().optional(),
+  shortTermTrend: marketBiasEnum.nullable().optional(),
+  intermediateTrend: marketBiasEnum.nullable().optional(),
+  longTermTrend: marketBiasEnum.nullable().optional(),
+  volatilityCondition: volatilityConditionEnum.nullable().optional(),
+  breadthCondition: breadthConditionEnum.nullable().optional(),
+  narrativeTags: z.array(z.string().max(50)).optional().default([]),
+  notes: z.string().max(5000).nullable().optional(),
+  routineCompleted: z.boolean().optional().default(false),
+  symbolBiases: z.array(symbolBiasSchema).optional().default([]),
+});
+
+export const aiChartInsightSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  symbol: z.string().min(1).max(20).transform((s) => s.toUpperCase()),
+  timeframe: z.string().max(50).nullable().optional(),
+  aiTrendAssessment: marketBiasEnum.nullable().optional(),
+  aiMomentumAssessment: z.string().max(200).nullable().optional(),
+  aiMAStatus: aiMaStatusEnum.nullable().optional(),
+  aiVolumeCondition: aiVolumeConditionEnum.nullable().optional(),
+  aiStructureNotes: z.string().max(2000).nullable().optional(),
+  aiConfidenceScore: z.number().int().min(0).max(100).nullable().optional(),
+  sourceType: chartSourceTypeEnum.optional().default("CHART_UPLOAD"),
+  rawAIResponse: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+
 // ─── CSV Import ─────────────────────────────────────────────
 export const csvRowSchema = z.object({
   account_name: z.string().min(1),
@@ -205,4 +249,36 @@ export const csvRowSchema = z.object({
   call_put: z.string().optional(),
   external_trade_id: z.string().optional(),
   notes: z.string().optional(),
+});
+
+// ─── Fundamental Research ─────────────────────────────────────
+export const fundamentalWatchlistPostSchema = z.object({
+  symbol: z.string().min(1).max(10),
+});
+
+export const fundamentalResearchPatchSchema = z.object({
+  verdict: z.enum(["PASS", "WATCH", "REJECT"]).nullable().optional(),
+  notes: z.string().max(10000).nullable().optional(),
+  earningsReviewed: z.boolean().optional(),
+  earningsNotes: z.string().max(5000).nullable().optional(),
+});
+
+export const fundamentalChatPostSchema = z.object({
+  message: z.string().min(1).max(4000),
+});
+
+// ─── Core Premium Bucket ────────────────────────────────────
+export const corePlanSchema = z.object({
+  mode: z.enum(CORE_PLAN_MODES),
+  shareGoal: z.number().int().positive().nullable().optional(),
+  modeAfterGoal: z.enum(CORE_PLAN_MODES).default("INCOME"),
+  reinvestThresholdShares: z.number().int().min(1).default(1),
+});
+
+export const coreReinvestSchema = z.object({
+  shares: z.number().positive(),
+  price: z.number().positive(),
+  fees: z.number().min(0).default(0),
+  occurredAt: z.string().datetime(),
+  signalId: z.string().optional(),
 });

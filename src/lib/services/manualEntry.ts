@@ -1,8 +1,11 @@
 import { LedgerType, OptionAction, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { createStockLot, consumeStockLots, applyBasisReduction } from "./fifoLots";
-import { finalizeInstance } from "./instanceFinalizer";
+import type { Bucket } from "@/lib/buckets";
+import { createStockLot, consumeStockLots } from "./fifoLots";
+import { reverseSettlement, settleOptionInstance } from "./premiumSettlement";
+import { recordPremiumFundedPurchase } from "./coreBucket";
 import { adjustCashBalance } from "./cashTracker";
+import { getEnvironmentSnapshotForTrade } from "./disciplineEngine";
 
 interface StockEntryInput {
   accountId: string;
@@ -12,11 +15,14 @@ interface StockEntryInput {
   price: number;
   fees: number;
   occurredAt: Date;
-  wheelCategory: "CORE" | "MAD_MONEY" | "FREE_CAPITAL" | "RISK_MGMT";
+  wheelCategory: Bucket;
   notes?: string;
   /** When recording a full round-trip: exit price (sell if entry was BUY, buy to cover if SELL). */
   exitPrice?: number;
   exitDateTime?: Date;
+  /** BUY paid for from this holding's core premium bucket (a reinvest). */
+  premiumFunded?: boolean;
+  reinvestSignalId?: string;
 }
 
 interface OptionLegInput {
@@ -42,7 +48,7 @@ interface OptionEntryInput {
   occurredAt: Date;
   strategyType?: string;
   premiumPolicyOverride?: "CASHFLOW" | "BASIS_REDUCTION" | "REINVEST_ON_CLOSE";
-  wheelCategoryOverride?: "CORE" | "MAD_MONEY" | "FREE_CAPITAL" | "RISK_MGMT";
+  wheelCategoryOverride?: Bucket;
   notes?: string;
   additionalLegs?: OptionLegInput[];
   /** When recording a full round-trip: exit price (e.g. BTC/STC price). */
@@ -54,6 +60,7 @@ interface OptionEntryInput {
  * Process a manual stock entry (BUY or SELL).
  */
 export async function processStockEntry(input: StockEntryInput) {
+  const envSnapshot = await getEnvironmentSnapshotForTrade(input.accountId, input.occurredAt);
   return prisma.$transaction(async (tx) => {
     // Ensure underlying exists
     const underlying = await tx.underlying.upsert({
@@ -92,7 +99,7 @@ export async function processStockEntry(input: StockEntryInput) {
 
     // FIFO processing
     if (input.action === "BUY") {
-      await createStockLot(
+      const lot = await createStockLot(
         {
           accountId: input.accountId,
           underlyingId: underlying.id,
@@ -102,6 +109,18 @@ export async function processStockEntry(input: StockEntryInput) {
         },
         tx
       );
+      if (input.premiumFunded) {
+        await recordPremiumFundedPurchase(tx, {
+          accountId: input.accountId,
+          underlyingId: underlying.id,
+          lotId: lot.id,
+          quantity: input.quantity,
+          price: input.price,
+          totalCost: totalAmount.plus(input.fees),
+          occurredAt: input.occurredAt,
+          reinvestSignalId: input.reinvestSignalId,
+        });
+      }
     } else {
       await consumeStockLots(
         {
@@ -138,6 +157,10 @@ export async function processStockEntry(input: StockEntryInput) {
         entryDateTime: input.occurredAt,
         wheelCategoryOverride: input.wheelCategory,
         thesisNotes: input.notes ?? `${input.action} ${input.quantity} ${input.symbol} @ $${input.price}`,
+        marketEnvironmentAtEntry: envSnapshot.marketEnvironmentAtEntry,
+        environmentScoreAtEntry: envSnapshot.environmentScoreAtEntry,
+        humanAIAlignmentAtEntry: envSnapshot.humanAIAlignmentAtEntry,
+        routineCompletedAtEntry: envSnapshot.routineCompletedAtEntry,
       },
     });
 
@@ -218,6 +241,7 @@ export async function processStockEntry(input: StockEntryInput) {
  * BTC/STC/EXPIRE/ASSIGN/EXERCISE = finalize existing instance.
  */
 export async function processOptionEntry(input: OptionEntryInput) {
+  const envSnapshot = await getEnvironmentSnapshotForTrade(input.accountId, input.occurredAt);
   return prisma.$transaction(async (tx) => {
     // Ensure underlying exists
     const underlying = await tx.underlying.upsert({
@@ -273,14 +297,14 @@ export async function processOptionEntry(input: OptionEntryInput) {
           description: `${input.action} ${input.quantity}x ${input.symbol} $${input.strike} ${input.callPut} @ $${input.price}`,
         },
       });
-      if (input.action === "STO") {
-        await adjustCashBalance(tx, input.accountId, totalAmount);
-      } else {
-        await adjustCashBalance(tx, input.accountId, totalAmount.neg());
-      }
-
       // Fee entry if applicable
       const feesAmount = input.fees ?? 0;
+      const openingFees = new Prisma.Decimal(feesAmount);
+      if (input.action === "STO") {
+        await adjustCashBalance(tx, input.accountId, totalAmount.minus(openingFees));
+      } else {
+        await adjustCashBalance(tx, input.accountId, totalAmount.plus(openingFees).neg());
+      }
       if (feesAmount > 0) {
         await tx.ledgerEntry.create({
           data: {
@@ -309,6 +333,10 @@ export async function processOptionEntry(input: OptionEntryInput) {
           entryDateTime: input.occurredAt,
           wheelCategoryOverride: input.wheelCategoryOverride || null,
           thesisNotes: input.notes ?? `${input.action} ${input.quantity}x ${input.symbol} $${input.strike} ${input.callPut} @ $${input.price}`,
+          marketEnvironmentAtEntry: envSnapshot.marketEnvironmentAtEntry,
+          environmentScoreAtEntry: envSnapshot.environmentScoreAtEntry,
+          humanAIAlignmentAtEntry: envSnapshot.humanAIAlignmentAtEntry,
+          routineCompletedAtEntry: envSnapshot.routineCompletedAtEntry,
         },
       });
 
@@ -333,24 +361,7 @@ export async function processOptionEntry(input: OptionEntryInput) {
         } else {
           await adjustCashBalance(tx, input.accountId, exitAmount.neg());
         }
-        const entries = await tx.ledgerEntry.findMany({
-          where: { strategyInstanceId: instanceId },
-        });
-        let nrop = new Prisma.Decimal(0);
-        for (const entry of entries) {
-          if (entry.type === LedgerType.PREMIUM_CREDIT) nrop = nrop.plus(entry.amount);
-          else if (entry.type === LedgerType.PREMIUM_DEBIT) nrop = nrop.minus(entry.amount);
-          else if (entry.type === LedgerType.FEE) nrop = nrop.minus(entry.amount);
-        }
-        await tx.strategyInstance.update({
-          where: { id: instanceId },
-          data: {
-            status: "FINALIZED",
-            finalizationReason: "CLOSED",
-            finalizedAt: exitDate,
-            realizedOptionProfit: nrop,
-          },
-        });
+        await settleOptionInstance(tx, { instanceId, reason: "CLOSED", finalizedAt: exitDate });
         await tx.journalTrade.update({
           where: { id: primaryJournalTrade.id },
           data: {
@@ -381,55 +392,39 @@ export async function processOptionEntry(input: OptionEntryInput) {
       instanceId = openInstance.id;
     }
 
-    // Determine ledger type
-    let ledgerType: LedgerType;
-    if (input.action === "STO" || input.action === "STC") {
-      ledgerType = LedgerType.PREMIUM_CREDIT;
-    } else if (input.action === "BTO" || input.action === "BTC") {
-      ledgerType = LedgerType.PREMIUM_DEBIT;
-    } else {
-      ledgerType = LedgerType.FEE;
-    }
-
-    // Create ledger entry
-    await tx.ledgerEntry.create({
-      data: {
-        accountId: input.accountId,
-        strategyInstanceId: instanceId,
-        type: ledgerType,
-        amount: totalAmount,
-        occurredAt: input.occurredAt,
-        description: `${input.action} ${input.quantity}x ${input.symbol} $${input.strike} ${input.callPut} @ $${input.price}`,
-      },
-    });
-
-    // Fee entry (cost of trade — always create when fees > 0 so Journal/P/L include them)
-    const feesAmount = input.fees ?? 0;
-    if (feesAmount > 0) {
-      await tx.ledgerEntry.create({
-        data: {
-          accountId: input.accountId,
-          strategyInstanceId: instanceId,
-          type: LedgerType.FEE,
-          amount: new Prisma.Decimal(feesAmount),
-          occurredAt: input.occurredAt,
-          description: `Fee for ${input.action} ${input.symbol}`,
-        },
-      });
-    }
-
-    // Auto-adjust cash balance for the primary leg (only when onboarding is complete)
-    const feesDecimal = new Prisma.Decimal(feesAmount);
-    if (input.action === "STO" || input.action === "STC") {
-      // Selling option: receive premium minus fees
-      await adjustCashBalance(tx, input.accountId, totalAmount.minus(feesDecimal));
-    } else if (input.action === "BTO" || input.action === "BTC") {
-      // Buying option: pay premium plus fees
-      await adjustCashBalance(tx, input.accountId, totalAmount.plus(feesDecimal).neg());
-    }
-
-    // Finalize if closing action
+    // Closing actions (opening legs were fully booked above).
     if (!isOpening) {
+      // BTC/STC move premium; EXPIRE/ASSIGN/EXERCISE close the contract without a premium payment.
+      if (input.action === "BTC" || input.action === "STC") {
+        const isCredit = input.action === "STC";
+        await tx.ledgerEntry.create({
+          data: {
+            accountId: input.accountId,
+            strategyInstanceId: instanceId,
+            type: isCredit ? LedgerType.PREMIUM_CREDIT : LedgerType.PREMIUM_DEBIT,
+            amount: totalAmount,
+            occurredAt: input.occurredAt,
+            description: `${input.action} ${input.quantity}x ${input.symbol} $${input.strike} ${input.callPut} @ $${input.price}`,
+          },
+        });
+        await adjustCashBalance(tx, input.accountId, isCredit ? totalAmount : totalAmount.neg());
+      }
+
+      const feesAmount = input.fees ?? 0;
+      if (feesAmount > 0) {
+        await tx.ledgerEntry.create({
+          data: {
+            accountId: input.accountId,
+            strategyInstanceId: instanceId,
+            type: LedgerType.FEE,
+            amount: new Prisma.Decimal(feesAmount),
+            occurredAt: input.occurredAt,
+            description: `Fee for ${input.action} ${input.symbol}`,
+          },
+        });
+        await adjustCashBalance(tx, input.accountId, new Prisma.Decimal(feesAmount).neg());
+      }
+
       const reasonMap: Record<string, "CLOSED" | "EXPIRED" | "ASSIGNED" | "EXERCISED"> = {
         BTC: "CLOSED",
         STC: "CLOSED",
@@ -437,30 +432,9 @@ export async function processOptionEntry(input: OptionEntryInput) {
         ASSIGN: "ASSIGNED",
         EXERCISE: "EXERCISED",
       };
-
       const reason = reasonMap[input.action];
       if (reason) {
-        // Compute NROP inside this transaction
-        const entries = await tx.ledgerEntry.findMany({
-          where: { strategyInstanceId: instanceId },
-        });
-
-        let nrop = new Prisma.Decimal(0);
-        for (const entry of entries) {
-          if (entry.type === LedgerType.PREMIUM_CREDIT) nrop = nrop.plus(entry.amount);
-          else if (entry.type === LedgerType.PREMIUM_DEBIT) nrop = nrop.minus(entry.amount);
-          else if (entry.type === LedgerType.FEE) nrop = nrop.minus(entry.amount);
-        }
-
-        await tx.strategyInstance.update({
-          where: { id: instanceId },
-          data: {
-            status: "FINALIZED",
-            finalizationReason: reason,
-            finalizedAt: input.occurredAt,
-            realizedOptionProfit: nrop,
-          },
-        });
+        await settleOptionInstance(tx, { instanceId, reason, finalizedAt: input.occurredAt });
       }
     }
 
@@ -521,6 +495,10 @@ export async function processOptionEntry(input: OptionEntryInput) {
             entryDateTime: input.occurredAt,
             wheelCategoryOverride: input.wheelCategoryOverride || null,
             thesisNotes: input.notes ?? `${leg.action} ${leg.quantity}x ${input.symbol} $${leg.strike} ${leg.callPut} @ $${leg.price}`,
+            marketEnvironmentAtEntry: envSnapshot.marketEnvironmentAtEntry,
+            environmentScoreAtEntry: envSnapshot.environmentScoreAtEntry,
+            humanAIAlignmentAtEntry: envSnapshot.humanAIAlignmentAtEntry,
+            routineCompletedAtEntry: envSnapshot.routineCompletedAtEntry,
           },
         });
 
@@ -551,34 +529,9 @@ export async function processOptionEntry(input: OptionEntryInput) {
  *   Tears down the old instance and rebuilds it correctly.
  *
  * Safe to call multiple times — idempotent once the data is correct.
+ * Explicit repair only: it must never run on GET requests.
  */
 export async function backfillJournalOptionFinancials(accountId: string) {
-  // Step 0: Clean up orphaned strategy instances (instances with no journal trade referencing them)
-  // These can be left behind from previous partial backfill runs.
-  const orphanedInstances = await prisma.strategyInstance.findMany({
-    where: {
-      accountId,
-      instrumentType: "OPTION",
-      journalTrade: null, // No journal trade references this instance
-    },
-    select: { id: true },
-  });
-
-  if (orphanedInstances.length > 0) {
-    const orphanIds = orphanedInstances.map((i) => i.id);
-    await prisma.$transaction(async (tx) => {
-      await tx.ledgerEntry.deleteMany({
-        where: { strategyInstanceId: { in: orphanIds } },
-      });
-      await tx.reinvestSignal.deleteMany({
-        where: { instanceId: { in: orphanIds } },
-      });
-      await tx.strategyInstance.deleteMany({
-        where: { id: { in: orphanIds } },
-      });
-    });
-  }
-
   // ─── Phase 1: Sync LONG options closed in Journal but instance still OPEN ───
   // When user closes a LEAP in Trade Journal, JournalTrade gets exitPrice but
   // StrategyInstance may stay OPEN. This syncs the portfolio/financial state.
@@ -629,32 +582,7 @@ export async function backfillJournalOptionFinancials(accountId: string) {
           });
         }
 
-        const allEntries = await tx.ledgerEntry.findMany({
-          where: { strategyInstanceId: inst.id },
-        });
-        let nrop = new Prisma.Decimal(0);
-        for (const entry of allEntries) {
-          if (entry.type === LedgerType.PREMIUM_CREDIT) nrop = nrop.plus(entry.amount);
-          else if (entry.type === LedgerType.PREMIUM_DEBIT) nrop = nrop.minus(entry.amount);
-          else if (entry.type === LedgerType.FEE) nrop = nrop.minus(entry.amount);
-        }
-
-        await tx.strategyInstance.update({
-          where: { id: inst.id },
-          data: {
-            status: "FINALIZED",
-            finalizationReason: "CLOSED",
-            finalizedAt: exitDate,
-            realizedOptionProfit: nrop,
-          },
-        });
-
-        if (nrop.greaterThan(0)) {
-          await applyBasisReduction(
-            { accountId, underlyingId: trade.underlyingId, premiumAmount: nrop },
-            tx
-          );
-        }
+        await settleOptionInstance(tx, { instanceId: inst.id, reason: "CLOSED", finalizedAt: exitDate });
 
         if (exitPrice > 0) {
           const proceeds = new Prisma.Decimal(exitPrice).mul(qty).mul(100);
@@ -703,7 +631,10 @@ export async function backfillJournalOptionFinancials(accountId: string) {
 
     // Check NROP value correctness
     if (isClosed && inst.realizedOptionProfit !== null) {
-      const expectedNrop = (entryPrice - (exitPrice ?? 0)) * qty * 100;
+      const feeTotal = inst.ledgerEntries
+        .filter((e) => e.type === "FEE")
+        .reduce((sum, e) => sum + parseFloat(e.amount.toString()), 0);
+      const expectedNrop = (entryPrice - (exitPrice ?? 0)) * qty * 100 - feeTotal;
       const actualNrop = parseFloat(inst.realizedOptionProfit.toString());
       if (Math.abs(actualNrop - expectedNrop) > 0.01) return true;
     }
@@ -742,25 +673,16 @@ export async function backfillJournalOptionFinancials(accountId: string) {
       const entryPrice = trade.entryPrice ? parseFloat(trade.entryPrice.toString()) : 0;
       const exitPrice = trade.exitPrice ? parseFloat(trade.exitPrice.toString()) : null;
       const isClosed = exitPrice !== null;
+      let preservedFees = new Prisma.Decimal(0);
 
       // Case B: Tear down broken strategy instance first
       if (trade.strategyInstanceId && trade.strategyInstance) {
         const oldInst = trade.strategyInstance;
 
-        // Reverse any existing basis reduction
-        if (oldInst.realizedOptionProfit) {
-          const oldNrop = parseFloat(oldInst.realizedOptionProfit.toString());
-          if (oldNrop > 0) {
-            await applyBasisReduction(
-              {
-                accountId,
-                underlyingId: trade.underlyingId,
-                premiumAmount: new Prisma.Decimal(oldNrop).neg(),
-              },
-              tx
-            );
-          }
-        }
+        await reverseSettlement(tx, oldInst.id);
+        preservedFees = oldInst.ledgerEntries
+          .filter((e) => e.type === "FEE")
+          .reduce((sum, e) => sum.plus(e.amount), new Prisma.Decimal(0));
 
         // Delete old ledger entries
         await tx.ledgerEntry.deleteMany({
@@ -830,21 +752,25 @@ export async function backfillJournalOptionFinancials(accountId: string) {
         });
       }
 
-      // Compute NROP and apply basis reduction if closed
-      if (isClosed) {
-        const nrop = new Prisma.Decimal(entryPrice).minus(exitPrice).mul(qty).mul(100);
-
-        await tx.strategyInstance.update({
-          where: { id: instance.id },
-          data: { realizedOptionProfit: nrop },
+      if (preservedFees.gt(0)) {
+        await tx.ledgerEntry.create({
+          data: {
+            accountId,
+            strategyInstanceId: instance.id,
+            type: LedgerType.FEE,
+            amount: preservedFees,
+            occurredAt: trade.entryDateTime ?? new Date(),
+            description: `Fee for STO ${trade.underlying.symbol}`,
+          },
         });
+      }
 
-        if (nrop.greaterThan(0)) {
-          await applyBasisReduction(
-            { accountId, underlyingId: trade.underlyingId, premiumAmount: nrop },
-            tx
-          );
-        }
+      if (isClosed) {
+        await settleOptionInstance(tx, {
+          instanceId: instance.id,
+          reason: "CLOSED",
+          finalizedAt: trade.exitDateTime ?? new Date(),
+        });
       }
 
       // Link journal trade to the new strategy instance

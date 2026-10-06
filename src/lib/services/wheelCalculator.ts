@@ -1,5 +1,6 @@
 import { WheelCategory, LedgerType, CallPut, LongShort, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { BUCKETS, DEFAULT_BUCKET } from "@/lib/buckets";
 
 /** Multiplier for options (1 contract = 100 shares). */
 const OPTIONS_MULTIPLIER = 100;
@@ -9,7 +10,7 @@ const OPTIONS_MULTIPLIER = 100;
  * Resolution order:
  *   1. Instance override
  *   2. Underlying classification
- *   3. Default = MAD_MONEY
+ *   3. Default = SPECULATION
  */
 export async function resolveWheelCategory(instanceId: string): Promise<WheelCategory> {
   const instance = await prisma.strategyInstance.findUniqueOrThrow({
@@ -31,7 +32,7 @@ export async function resolveWheelCategory(instanceId: string): Promise<WheelCat
     return instance.underlying.wheelClassification.category;
   }
 
-  return "MAD_MONEY";
+  return DEFAULT_BUCKET;
 }
 
 /**
@@ -44,12 +45,12 @@ export function suggestWheelCategory(
 ): WheelCategory {
   if (underlyingCategory === "CORE") {
     if (longShort === "SHORT") return "CORE";
-    if (longShort === "LONG") return "MAD_MONEY";
+    if (longShort === "LONG") return "SPECULATION";
   }
 
-  if (underlyingCategory === "MAD_MONEY") return "MAD_MONEY";
+  if (underlyingCategory === "RISK_FREE_MONEY") return "RISK_FREE_MONEY";
 
-  return "MAD_MONEY";
+  return "SPECULATION";
 }
 
 interface WheelSlice {
@@ -100,14 +101,14 @@ export async function calculateOptionRiskByCategory(accountId: string): Promise<
   };
 
   const byCategory = new Map<WheelCategory, Prisma.Decimal>();
-  (["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"] as WheelCategory[]).forEach((c) =>
+  ([...BUCKETS] as WheelCategory[]).forEach((c) =>
     byCategory.set(c, new Prisma.Decimal(0))
   );
 
   const resolveCategory = (inst: (typeof openInstances)[0]): WheelCategory => {
     if (inst.wheelCategoryOverride) return inst.wheelCategoryOverride;
     if (inst.underlying.wheelClassification) return inst.underlying.wheelClassification.category;
-    return "MAD_MONEY";
+    return DEFAULT_BUCKET;
   };
 
   const addRisk = (category: WheelCategory, amount: Prisma.Decimal) => {
@@ -302,28 +303,28 @@ export async function calculateWheel(accountId: string): Promise<{
 
   // Aggregate cost basis by wheel category
   const categoryTotals = new Map<WheelCategory, Prisma.Decimal>();
-  const categories: WheelCategory[] = ["CORE", "MAD_MONEY", "FREE_CAPITAL", "RISK_MGMT"];
+  const categories: WheelCategory[] = [...BUCKETS];
   categories.forEach((c) => categoryTotals.set(c, new Prisma.Decimal(0)));
 
   for (const lot of lots) {
-    const category = classMap.get(lot.underlyingId) ?? "MAD_MONEY";
+    const category = classMap.get(lot.underlyingId) ?? DEFAULT_BUCKET;
     const costPerShare = lot.costBasis.div(lot.quantity);
     const lotValue = costPerShare.mul(lot.remaining);
     categoryTotals.set(category, (categoryTotals.get(category) ?? new Prisma.Decimal(0)).plus(lotValue));
   }
 
-  // Add open-option risk to each category (Mad Money, etc.) so risk shows in the wheel
+  // Add open-option risk to each category (Speculation, etc.) so risk shows in the wheel
   optionRisk.byCategory.forEach((riskAmount, category) => {
     if (riskAmount.gt(0)) {
       categoryTotals.set(category, (categoryTotals.get(category) ?? new Prisma.Decimal(0)).plus(riskAmount));
     }
   });
 
-  // FREE_CAPITAL = cash minus total option risk (cash "reserved" against open options)
+  // RISK_FREE_MONEY = cash minus total option risk (cash "reserved" against open options)
   const freeCapitalCash = cashBalance.minus(optionRisk.total);
   categoryTotals.set(
-    "FREE_CAPITAL",
-    (categoryTotals.get("FREE_CAPITAL") ?? new Prisma.Decimal(0)).plus(freeCapitalCash.gt(0) ? freeCapitalCash : new Prisma.Decimal(0))
+    "RISK_FREE_MONEY",
+    (categoryTotals.get("RISK_FREE_MONEY") ?? new Prisma.Decimal(0)).plus(freeCapitalCash.gt(0) ? freeCapitalCash : new Prisma.Decimal(0))
   );
 
   // Compute totals

@@ -16,6 +16,12 @@ export async function POST(
     if (!account) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
+    if (account.brokerAccountHash) {
+      return NextResponse.json(
+        { error: "This account syncs from Schwab. Trades come in automatically. Use Sync now to pull the latest." },
+        { status: 409 }
+      );
+    }
 
     const body = await req.json();
     const data = optionEntrySchema.parse(body);

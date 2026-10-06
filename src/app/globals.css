@@ -1,31 +1,152 @@
 @import "tailwindcss";
 
-@theme {
-  --color-background: #0a0a0f;
-  --color-foreground: #f0f0f5;
-  --color-card: #12121a;
-  --color-card-hover: #1a1a25;
-  --color-border: #2a2a3a;
-  --color-muted: #6b7280;
-  --color-accent: #6366f1;
-  --color-accent-hover: #818cf8;
-  --color-success: #22c55e;
-  --color-warning: #f59e0b;
-  --color-danger: #ef4444;
-  --color-core: #6366f1;
-  --color-mad-money: #f59e0b;
-  --color-free-capital: #22c55e;
-  --color-risk-mgmt: #ef4444;
+/*
+ * Theme tokens. Light "desk" palette is the default; dark is opt-in via
+ * <html data-theme="dark"> (set by ThemeToggle, persisted in localStorage).
+ * Utilities (bg-card, text-muted, border-border, bg-success/10 …) resolve
+ * through these variables at runtime, so every page follows the theme.
+ */
+:root {
+  --bg: #f4f3ef;
+  --fg: #15151c;
+  --card: #ffffff;
+  --card-hover: #f7f6f2;
+  --border: #e4e1d9;
+  --muted: #6e6c76;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --success: #12a150;
+  --warning: #d97706;
+  --danger: #e0303c;
+  --core: #4f46e5;
+  --speculation: #e48a0b;
+  --free-money: #12a150;
+  --shadow: 0 1px 2px rgb(20 20 30 / 0.04), 0 4px 16px -6px rgb(20 20 30 / 0.08);
+  --grid-line: rgb(20 20 30 / 0.05);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #08080d;
+  --fg: #f0f0f5;
+  --card: #111119;
+  --card-hover: #181824;
+  --border: #262636;
+  --muted: #7c7c8a;
+  --accent: #6d66f6;
+  --accent-hover: #8b85ff;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #f43f4e;
+  --core: #7c75ff;
+  --speculation: #f5a524;
+  --free-money: #22c55e;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  --grid-line: rgb(255 255 255 / 0.04);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--card);
+  --color-card-hover: var(--card-hover);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-core: var(--core);
+  --color-speculation: var(--speculation);
+  --color-free-money: var(--free-money);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
+  --shadow-card: var(--shadow);
 }
 
 body {
-  background: var(--color-background);
-  color: var(--color-foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
 }
 
+/* Numbers line up and don't jitter when they tick */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Subtle dotted grid used behind desk panels */
+.desk-grid {
+  background-image: radial-gradient(var(--grid-line) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+
+/* ─── Live motion ───────────────────────────────────────────── */
+@keyframes flash-up {
+  0% { background-color: color-mix(in oklab, var(--success) 28%, transparent); }
+  100% { background-color: transparent; }
+}
+@keyframes flash-down {
+  0% { background-color: color-mix(in oklab, var(--danger) 28%, transparent); }
+  100% { background-color: transparent; }
+}
+.flash-up { animation: flash-up 1.1s ease-out; }
+.flash-down { animation: flash-down 1.1s ease-out; }
+
+@keyframes ticker-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.ticker-track { animation: ticker-scroll var(--ticker-duration, 60s) linear infinite; }
+.ticker:hover .ticker-track { animation-play-state: paused; }
+
+@keyframes live-ping {
+  0% { transform: scale(1); opacity: 0.7; }
+  80%, 100% { transform: scale(2.6); opacity: 0; }
+}
+.live-ping { animation: live-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite; }
+
+@keyframes slide-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.slide-in { animation: slide-in 0.35s ease-out both; }
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.rise-in { animation: rise-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+@keyframes sweep {
+  from { stroke-dashoffset: var(--len, 400); }
+  to { stroke-dashoffset: 0; }
+}
+.sweep { stroke-dasharray: var(--len, 400); animation: sweep 1.2s ease-out both; }
+
+@keyframes flow-dash {
+  to { stroke-dashoffset: -24; }
+}
+.flow-dash { stroke-dasharray: 4 8; animation: flow-dash 1s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .flash-up, .flash-down, .ticker-track, .live-ping, .slide-in, .rise-in, .sweep, .flow-dash {
+    animation: none !important;
+  }
+}
+
+/* Theme toggle icon swap */
+.theme-icon-dark { display: none; }
+:root[data-theme="dark"] .theme-icon-dark { display: inline; }
+:root[data-theme="dark"] .theme-icon-light { display: none; }
+
 /* Custom scrollbar */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--color-background); }
-::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }

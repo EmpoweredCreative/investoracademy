@@ -80,7 +80,8 @@ src/
 │   │   │       ├── add/option/  # Manual option entry
 │   │   │       ├── wheel/       # Wealth Wheel
 │   │   │       ├── journal/     # Trade journal
-│   │   │       ├── research/    # Theta research
+│   │   │       ├── fundamentals/ # Fundamental research (Finviz → Yahoo → R/Y/G)
+│   │   │       ├── research/    # Trade research (options strategies)
 │   │   │       ├── reinvest/    # Reinvest signals
 │   │   │       └── portfolio/   # Phase II placeholder
 │   │   ├── import/      # CSV import with dedupe

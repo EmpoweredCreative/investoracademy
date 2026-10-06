@@ -60,10 +60,9 @@ async function main() {
   // ─── Create Wheel Targets ─────────────────────────────────
   for (const account of [simAccount, liveAccount]) {
     const targets = [
-      { category: "CORE" as WheelCategory, targetPct: 40 },
-      { category: "MAD_MONEY" as WheelCategory, targetPct: 30 },
-      { category: "FREE_CAPITAL" as WheelCategory, targetPct: 20 },
-      { category: "RISK_MGMT" as WheelCategory, targetPct: 10 },
+      { category: "CORE" as WheelCategory, targetPct: 50 },
+      { category: "SPECULATION" as WheelCategory, targetPct: 20 },
+      { category: "RISK_FREE_MONEY" as WheelCategory, targetPct: 30 },
     ];
 
     for (const t of targets) {
@@ -104,8 +103,8 @@ async function main() {
   const classifications: Record<string, WheelCategory> = {
     AAPL: "CORE",
     MSFT: "CORE",
-    NVDA: "MAD_MONEY",
-    AMZN: "MAD_MONEY",
+    NVDA: "SPECULATION",
+    AMZN: "SPECULATION",
     SPY: "CORE",
   };
 
@@ -432,7 +431,7 @@ async function main() {
       roid: new Prisma.Decimal("0.0008"),
       notes:
         "AMZN in consolidation range $175-$200. Iron condor to capture time decay. Low IV rank suggests wings should be tight.",
-      wheelCategoryOverride: "MAD_MONEY",
+      wheelCategoryOverride: "SPECULATION",
     },
   });
 

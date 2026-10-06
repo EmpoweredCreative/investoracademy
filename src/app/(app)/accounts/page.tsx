@@ -17,6 +17,7 @@ const TOOL_LABELS: Record<string, string> = {
   journal: "Journal",
   research: "Research",
   reinvest: "Reinvest",
+  core: "Core Premium",
 };
 
 interface Account {

@@ -13,6 +13,17 @@ enum AccountMode {
   LIVE_SCHWAB
 }
 
+enum BrokerProvider {
+  SCHWAB
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  EXPIRING
+  EXPIRED
+  ERROR
+}
+
 enum PremiumPolicy {
   CASHFLOW
   BASIS_REDUCTION
@@ -73,9 +84,28 @@ enum LongShort {
 
 enum WheelCategory {
   CORE
-  MAD_MONEY
-  FREE_CAPITAL
-  RISK_MGMT
+  SPECULATION
+  RISK_FREE_MONEY
+}
+
+enum CorePlanMode {
+  ACCUMULATE
+  REDUCE_BASIS
+  INCOME
+}
+
+enum BucketEntryKind {
+  PREMIUM_IN
+  REINVEST_OUT
+  BASIS_APPLIED
+  CASH_OUT
+  ADJUST
+}
+
+enum LotFunding {
+  CASH
+  PREMIUM
+  MIXED
 }
 
 enum ReinvestStatus {
@@ -135,6 +165,80 @@ enum NotificationFrequency {
   DAILY_DIGEST
 }
 
+// ─── Market Command Center enums ─────────────────────────────
+enum MarketBias {
+  BULLISH
+  BEARISH
+  NEUTRAL
+}
+
+enum VolatilityCondition {
+  EXPANDING
+  CONTRACTING
+  ELEVATED
+  COMPRESSED
+}
+
+enum BreadthCondition {
+  BROAD
+  NARROW
+  MIXED
+}
+
+enum AIMaStatus {
+  ABOVE_200
+  BELOW_200
+  MIXED
+}
+
+enum AIVolumeCondition {
+  ACCUMULATION
+  DISTRIBUTION
+  NEUTRAL
+}
+
+enum ChartSourceType {
+  CHART_UPLOAD
+  DATA_FEED
+}
+
+// ─── Fundamental Research enums ───────────────────────────────
+enum FundamentalWatchlistStatus {
+  QUEUED
+  IN_PROGRESS
+  PASSED
+  WATCH
+  REJECTED
+}
+
+enum FundamentalWatchlistSource {
+  FINVIZ_CSV
+  MANUAL
+}
+
+enum YahooFetchStatus {
+  PENDING
+  FETCHING
+  READY
+  ERROR
+}
+
+enum FundamentalSituationType {
+  STANDARD
+  MERGER_ARB
+  SPIN_OFF
+  IPO_SECONDARY
+  INSIDER_BUYING
+  BUYBACK
+  DIVIDEND
+}
+
+enum FundamentalVerdict {
+  PASS
+  WATCH
+  REJECT
+}
+
 // ─── MODELS ──────────────────────────────────────────────────
 
 model User {
@@ -150,8 +254,33 @@ model User {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  accounts       Account[]
-  notifications  Notification[]
+  accounts            Account[]
+  notifications       Notification[]
+  marketRoutineEntries MarketRoutineEntry[]
+  aiChartInsights     AIChartInsight[]
+  marketEnvironments  MarketEnvironment[]
+  brokerConnections   BrokerConnection[]
+}
+
+// OAuth link to a brokerage login. Tokens are AES-256-GCM encrypted (src/lib/crypto.ts).
+model BrokerConnection {
+  id               String           @id @default(cuid())
+  userId           String
+  provider         BrokerProvider
+  accessTokenEnc   String
+  refreshTokenEnc  String
+  accessExpiresAt  DateTime
+  refreshExpiresAt DateTime
+  status           ConnectionStatus @default(ACTIVE)
+  lastSyncAt       DateTime?
+  lastError        String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts         Account[]
+
+  @@unique([userId, provider])
 }
 
 model Account {
@@ -168,7 +297,20 @@ model Account {
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
+  // Broker link (LIVE_SCHWAB). Schwab identifies accounts by an opaque hash.
+  brokerConnectionId String?
+  brokerAccountHash  String?       @unique
+  brokerAccountMask  String?
+  brokerAccountType  String?
+  lastSyncedAt       DateTime?
+  lastSyncError      String?
+  syncedNetLiq       Decimal?      @db.Decimal(14, 4)
+  syncedBuyingPower  Decimal?      @db.Decimal(14, 4)
+  syncedDayPnl       Decimal?      @db.Decimal(14, 4)
+  syncedOptionValue  Decimal?      @db.Decimal(14, 4) // Net option market value at last sync (included in net liq)
+
   user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brokerConnection   BrokerConnection? @relation(fields: [brokerConnectionId], references: [id], onDelete: SetNull)
 
   underlyings            Underlying[]
   strategyInstances      StrategyInstance[]
@@ -181,6 +323,12 @@ model Account {
   journalTrades          JournalTrade[]
   researchIdeas          ResearchIdea[]
   notifications          Notification[]
+  fundamentalWatchlistItems FundamentalWatchlistItem[]
+  fundamentalResearch    FundamentalResearch[]
+  fundamentalSnapshots     FundamentalSnapshot[]
+  fundamentalChatThreads   FundamentalChatThread[]
+  finvizCsvImports         FinvizCsvImport[]
+  premiumBucketEntries     PremiumBucketEntry[]
 
   @@unique([userId, name])
 }
@@ -202,6 +350,9 @@ model Underlying {
   wheelClassification    WealthWheelClassification?
   journalTrades          JournalTrade[]
   researchIdeas          ResearchIdea[]
+  fundamentalResearch    FundamentalResearch[]
+  corePlan               CorePlan?
+  premiumBucketEntries   PremiumBucketEntry[]
 
   @@unique([accountId, symbol])
 }
@@ -226,6 +377,8 @@ model StrategyInstance {
   premiumPolicyOverride  PremiumPolicy?
   wheelCategoryOverride  WheelCategory?
   notes                  String?
+  brokerSymbol           String?             // OCC option symbol from the broker, used to match closes
+  closedQuantity         Decimal             @default(0) @db.Decimal(12, 4)
   createdAt              DateTime            @default(now())
   updatedAt              DateTime            @updatedAt
 
@@ -235,9 +388,11 @@ model StrategyInstance {
   ledgerEntries          LedgerEntry[]
   reinvestSignal         ReinvestSignal?
   journalTrade           JournalTrade?
+  premiumBucketEntries   PremiumBucketEntry[]
 
   @@index([accountId, status])
   @@index([underlyingId])
+  @@index([accountId, brokerSymbol])
 }
 
 model LedgerEntry {
@@ -271,6 +426,8 @@ model StockLot {
   remaining        Decimal    @db.Decimal(12, 4)
   costBasis        Decimal    @db.Decimal(14, 4)  // Original total cost (purchase price × qty + fees)
   premiumReduction Decimal    @default(0) @db.Decimal(14, 4)  // Total premium applied to reduce cost basis
+  fundedBy         LotFunding @default(CASH)
+  premiumFundedQty Decimal    @default(0) @db.Decimal(12, 4)  // Shares in this lot paid for with core premium
   createdAt        DateTime   @default(now())
 
   account       Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
@@ -299,6 +456,44 @@ model ReinvestSignal {
   instance        StrategyInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
 
   @@index([accountId, status])
+}
+
+// Per-holding plan for what happens to premium earned on a CORE stock.
+model CorePlan {
+  id                      String       @id @default(cuid())
+  underlyingId            String       @unique
+  mode                    CorePlanMode @default(ACCUMULATE)
+  shareGoal               Int?
+  modeAfterGoal           CorePlanMode @default(INCOME)
+  reinvestThresholdShares Int          @default(1)
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+
+  underlying              Underlying   @relation(fields: [underlyingId], references: [id], onDelete: Cascade)
+}
+
+// Signed ledger for a CORE stock's premium bucket. Balance = sum(amount).
+// PREMIUM_IN is positive; REINVEST_OUT / BASIS_APPLIED / CASH_OUT are negative.
+model PremiumBucketEntry {
+  id                 String          @id @default(cuid())
+  accountId          String
+  underlyingId       String
+  strategyInstanceId String?
+  stockLotId         String?
+  kind               BucketEntryKind
+  amount             Decimal         @db.Decimal(14, 4)
+  shares             Decimal?        @db.Decimal(12, 4)
+  price              Decimal?        @db.Decimal(12, 4)
+  note               String?
+  occurredAt         DateTime
+  createdAt          DateTime        @default(now())
+
+  account            Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  underlying         Underlying        @relation(fields: [underlyingId], references: [id], onDelete: Cascade)
+  strategyInstance   StrategyInstance? @relation(fields: [strategyInstanceId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, underlyingId, occurredAt])
+  @@index([strategyInstanceId])
 }
 
 model WealthWheelTarget {
@@ -366,6 +561,10 @@ model JournalTrade {
   thesisNotes         String?
   outcomeRating       OutcomeRating?
   wheelCategoryOverride WheelCategory?
+  marketEnvironmentAtEntry   String?
+  environmentScoreAtEntry    Int?
+  humanAIAlignmentAtEntry   Decimal?   @db.Decimal(5, 2)
+  routineCompletedAtEntry   Boolean    @default(false)
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
 
@@ -448,4 +647,202 @@ model Notification {
   account    Account?  @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
   @@index([userId, read])
+}
+
+model MarketRoutineEntry {
+  id                   String              @id @default(cuid())
+  userId               String
+  date                 DateTime            @db.Date
+  humanMarketBias      MarketBias?
+  shortTermTrend       MarketBias?
+  intermediateTrend    MarketBias?
+  longTermTrend        MarketBias?
+  volatilityCondition  VolatilityCondition?
+  breadthCondition     BreadthCondition?
+  narrativeTags        String[]
+  notes                String?
+  routineCompleted     Boolean             @default(false)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  symbolBiases         MarketRoutineSymbolBias[]
+
+  @@unique([userId, date])
+  @@index([userId])
+}
+
+model MarketRoutineSymbolBias {
+  id                   String              @id @default(cuid())
+  marketRoutineEntryId String
+  symbol               String
+  category             String              // INDICES | SECTORS
+  bias                 MarketBias?
+  dailyVolume          Decimal?            @db.Decimal(18, 0)  // numeric volume for sector rotation insights
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  marketRoutineEntry   MarketRoutineEntry  @relation(fields: [marketRoutineEntryId], references: [id], onDelete: Cascade)
+
+  @@unique([marketRoutineEntryId, symbol])
+  @@index([marketRoutineEntryId])
+}
+
+model AIChartInsight {
+  id                    String            @id @default(cuid())
+  userId                String
+  date                  DateTime          @db.Date
+  symbol                String
+  timeframe             String?
+  aiTrendAssessment     MarketBias?
+  aiMomentumAssessment  String?
+  aiMAStatus           AIMaStatus?
+  aiVolumeCondition    AIVolumeCondition?
+  aiStructureNotes      String?
+  aiConfidenceScore     Int?
+  sourceType           ChartSourceType    @default(CHART_UPLOAD)
+  rawAIResponse        Json?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  user                  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+}
+
+model MarketEnvironment {
+  id                    String    @id @default(cuid())
+  userId                String
+  date                  DateTime  @db.Date
+  environmentScore      Int
+  environmentLabel      String
+  environmentConfidence Int
+  alignmentScore        Decimal?  @db.Decimal(5, 2)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId])
+}
+
+// ─── Fundamental Research ─────────────────────────────────────
+
+model FinvizCsvImport {
+  id        String   @id @default(cuid())
+  accountId String
+  filename  String?
+  rowCount  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  items     FundamentalWatchlistItem[]
+
+  @@index([accountId])
+}
+
+model FundamentalWatchlistItem {
+  id               String                     @id @default(cuid())
+  accountId        String
+  symbol           String
+  status           FundamentalWatchlistStatus @default(QUEUED)
+  source           FundamentalWatchlistSource @default(MANUAL)
+  finvizImportId   String?
+  screenerNotes    String?
+  importMetadata   Json?
+  yahooFetchStatus YahooFetchStatus           @default(PENDING)
+  yahooFetchError  String?
+  yahooFetchedAt   DateTime?
+  importedAt       DateTime                   @default(now())
+  analyzedAt       DateTime?
+  updatedAt        DateTime                   @updatedAt
+
+  account          Account                    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  finvizImport     FinvizCsvImport?           @relation(fields: [finvizImportId], references: [id], onDelete: SetNull)
+
+  @@unique([accountId, symbol])
+  @@index([accountId])
+  @@index([accountId, yahooFetchStatus])
+}
+
+model FundamentalSnapshot {
+  id                 String   @id @default(cuid())
+  accountId          String
+  symbol             String
+  fetchedAt          DateTime @default(now())
+  price              Decimal? @db.Decimal(14, 4)
+  trailingPe         Decimal? @db.Decimal(12, 4)
+  forwardPe          Decimal? @db.Decimal(12, 4)
+  pegRatio           Decimal? @db.Decimal(12, 4)
+  enterpriseToEbitda Decimal? @db.Decimal(12, 4)
+  priceToBook        Decimal? @db.Decimal(12, 4)
+  priceToSales       Decimal? @db.Decimal(12, 4)
+  debtToEquity       Decimal? @db.Decimal(12, 4)
+  returnOnEquity     Decimal? @db.Decimal(12, 4)
+  profitMargins      Decimal? @db.Decimal(12, 4)
+  nextEarningsDate   DateTime? @db.Date
+  raw                Json?
+
+  account            Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, symbol])
+  @@index([accountId])
+}
+
+model FundamentalResearch {
+  id                    String                    @id @default(cuid())
+  accountId             String
+  symbol                String
+  underlyingId          String?
+  mgmtCapitalAllocation Int?
+  mgmtIncentives        Int?
+  mgmtExecution         Int?
+  brandPricingPower     Int?
+  brandLoyalty          Int?
+  brandTrust            Int?
+  situationType         FundamentalSituationType  @default(STANDARD)
+  situationChecklist    Json?
+  earningsReviewedAt    DateTime?
+  earningsNotes         String?
+  annualEpsGrowth       Decimal?                  @db.Decimal(10, 4)
+  revenueGrowth         Decimal?                  @db.Decimal(10, 4)
+  verdict               FundamentalVerdict?
+  notes                 String?
+  bollingerChecklist    Json?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+
+  account               Account                   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  underlying            Underlying?               @relation(fields: [underlyingId], references: [id], onDelete: SetNull)
+
+  @@unique([accountId, symbol])
+  @@index([accountId])
+}
+
+model FundamentalChatThread {
+  id        String   @id @default(cuid())
+  accountId String
+  symbol    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  messages  FundamentalChatMessage[]
+
+  @@unique([accountId, symbol])
+  @@index([accountId])
+}
+
+model FundamentalChatMessage {
+  id              String   @id @default(cuid())
+  threadId        String
+  role            String
+  content         String
+  contextSnapshot Json?
+  createdAt       DateTime @default(now())
+
+  thread          FundamentalChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId])
 }

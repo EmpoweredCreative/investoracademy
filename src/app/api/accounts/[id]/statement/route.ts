@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAuth, handleApiError } from "@/lib/api-helpers";
-import { backfillJournalOptionFinancials } from "@/lib/services/manualEntry";
 
 /**
  * GET /api/accounts/:id/statement
@@ -26,10 +25,6 @@ export async function GET(
     if (!account) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
-
-    // Auto-backfill: create financial records for any journal option trades
-    // that are missing StrategyInstance / LedgerEntry / basis reduction.
-    await backfillJournalOptionFinancials(accountId);
 
     // Fetch ALL underlyings — including ones with no remaining shares
     const underlyings = await prisma.underlying.findMany({

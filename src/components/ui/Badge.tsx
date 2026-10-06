@@ -2,7 +2,7 @@ import { ReactNode } from "react";
 
 interface BadgeProps {
   children: ReactNode;
-  variant?: "default" | "success" | "warning" | "danger" | "core" | "madMoney" | "freeCapital" | "riskMgmt";
+  variant?: "default" | "success" | "warning" | "danger" | "core" | "speculation" | "freeMoney";
   className?: string;
 }
 
@@ -13,9 +13,8 @@ export function Badge({ children, variant = "default", className = "" }: BadgePr
     warning: "bg-warning/10 text-warning border-warning/20",
     danger: "bg-danger/10 text-danger border-danger/20",
     core: "bg-core/10 text-core border-core/20",
-    madMoney: "bg-mad-money/10 text-mad-money border-mad-money/20",
-    freeCapital: "bg-free-capital/10 text-free-capital border-free-capital/20",
-    riskMgmt: "bg-risk-mgmt/10 text-risk-mgmt border-risk-mgmt/20",
+    speculation: "bg-speculation/10 text-speculation border-speculation/20",
+    freeMoney: "bg-free-money/10 text-free-money border-free-money/20",
   };
 
   return (
@@ -31,12 +30,10 @@ export function wheelCategoryBadgeVariant(category: string): BadgeProps["variant
   switch (category) {
     case "CORE":
       return "core";
-    case "MAD_MONEY":
-      return "madMoney";
-    case "FREE_CAPITAL":
-      return "freeCapital";
-    case "RISK_MGMT":
-      return "riskMgmt";
+    case "SPECULATION":
+      return "speculation";
+    case "RISK_FREE_MONEY":
+      return "freeMoney";
     default:
       return "default";
   }

@@ -15,6 +15,7 @@ import {
   PieChart,
   BookOpen,
   Microscope,
+  LineChart,
   RefreshCcw,
   Upload,
   DollarSign,
@@ -31,6 +32,7 @@ import {
   Archive,
   AlertTriangle,
 } from "lucide-react";
+import { AccountDesk } from "@/components/desk/Desk";
 
 interface AccountDetail {
   id: string;
@@ -533,11 +535,6 @@ export default function AccountDetailPage() {
     );
   }
 
-  const totalAccountValue =
-    (summary?.totalCostBasis ?? 0) +
-    parseFloat(account.cashBalance) +
-    parseFloat(account.cashflowReserve);
-
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -669,66 +666,30 @@ export default function AccountDetailPage() {
         </div>
       </ConfirmDialog>
 
+      {/* Live desk */}
+      <AccountDesk accountId={accountId} />
+
       {/* Quick Links */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+      <nav className="flex flex-wrap gap-2">
         {[
+          { href: `/accounts/${accountId}/core`, icon: RefreshCcw, label: "Core Premium", color: "text-core" },
           { href: `/accounts/${accountId}/statement`, icon: FileText, label: "Statement", color: "text-foreground" },
           { href: `/accounts/${accountId}/wheel`, icon: PieChart, label: "Wealth Wheel", color: "text-core" },
           { href: `/accounts/${accountId}/journal`, icon: BookOpen, label: "Journal", color: "text-accent" },
-          { href: `/accounts/${accountId}/research`, icon: Microscope, label: "Research", color: "text-warning" },
-          { href: `/accounts/${accountId}/reinvest`, icon: RefreshCcw, label: "Reinvest", color: "text-success" },
+          { href: `/accounts/${accountId}/fundamentals`, icon: Microscope, label: "Fundamental Research", color: "text-warning" },
+          { href: `/accounts/${accountId}/research`, icon: LineChart, label: "Trade Research", color: "text-accent" },
           { href: `/accounts/${accountId}/journal?tab=import`, icon: Upload, label: "CSV Import", color: "text-muted" },
         ].map((item) => (
-          <Link key={item.href} href={item.href}>
-            <Card className="hover:border-accent/30 transition-all text-center py-4">
-              <item.icon className={`w-5 h-5 ${item.color} mx-auto mb-2`} />
-              <p className="text-xs font-medium">{item.label}</p>
-            </Card>
+          <Link
+            key={item.href}
+            href={item.href}
+            className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-medium shadow-card hover:border-accent/40 hover:-translate-y-px transition-all"
+          >
+            <item.icon className={`w-3.5 h-3.5 ${item.color}`} />
+            {item.label}
           </Link>
         ))}
-      </div>
-
-      {/* Account Summary Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <p className="text-2xl font-bold">
-            ${totalAccountValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          </p>
-          <p className="text-xs text-muted flex items-center gap-1">
-            Total Account Value
-            <span
-              className="text-muted hover:text-foreground cursor-help"
-              title="Cash balance + cashflow reserve + cost basis of all positions. This uses your entered cost basis, not market value, so it may differ from your broker's net liquidation value."
-              aria-label="Total account value info"
-            >
-              <Info className="w-3.5 h-3.5 shrink-0" />
-            </span>
-          </p>
-        </Card>
-        <Card>
-          <p className="text-2xl font-bold">
-            ${(summary?.totalCostBasis ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          </p>
-          <p className="text-xs text-muted flex items-center gap-1">
-            Invested (Cost Basis)
-            <span
-              className="text-muted hover:text-foreground cursor-help"
-              title="Sum of what you paid for your stock and option positions (after premium reductions). Used for tracking performance, not current market value."
-              aria-label="Invested cost basis info"
-            >
-              <Info className="w-3.5 h-3.5 shrink-0" />
-            </span>
-          </p>
-        </Card>
-        <Card>
-          <p className="text-2xl font-bold">{positions.length}</p>
-          <p className="text-xs text-muted">Stock Positions</p>
-        </Card>
-        <Card>
-          <p className="text-2xl font-bold">{account._count.journalTrades}</p>
-          <p className="text-xs text-muted">Journal Entries</p>
-        </Card>
-      </div>
+      </nav>
 
       {/* Cash Balances */}
       <Card>

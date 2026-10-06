@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { BUCKET_COLORS, BUCKET_LABELS } from "@/lib/buckets";
 
 interface WheelSlice {
   category: string;
@@ -24,19 +25,8 @@ interface WheelData {
   cashflowReserve: string;
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
-  CORE: "Core",
-  MAD_MONEY: "Mad Money",
-  FREE_CAPITAL: "Free Capital",
-  RISK_MGMT: "Risk Mgmt",
-};
-
-const CATEGORY_COLORS: Record<string, string> = {
-  CORE: "#6366f1",
-  MAD_MONEY: "#f59e0b",
-  FREE_CAPITAL: "#22c55e",
-  RISK_MGMT: "#ef4444",
-};
+const CATEGORY_LABELS: Record<string, string> = BUCKET_LABELS;
+const CATEGORY_COLORS: Record<string, string> = BUCKET_COLORS;
 
 export default function WealthWheelPage() {
   const params = useParams();

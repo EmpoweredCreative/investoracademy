@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { ArrowLeft, CheckCircle } from "lucide-react";
 import Link from "next/link";
+import { BUCKET_OPTIONS } from "@/lib/buckets";
 
 // ── Strategy definitions ─────────────────────────────────────
 
@@ -454,12 +455,7 @@ export default function OptionEntryPage() {
               label="Wheel Category"
               value={wheelCategory}
               onChange={(e) => setWheelCategory(e.target.value)}
-              options={[
-                { value: "CORE", label: "Core" },
-                { value: "MAD_MONEY", label: "Mad Money" },
-                { value: "FREE_CAPITAL", label: "Free Capital" },
-                { value: "RISK_MGMT", label: "Risk Management" },
-              ]}
+              options={BUCKET_OPTIONS}
             />
           </div>
 

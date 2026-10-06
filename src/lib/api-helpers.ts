@@ -31,6 +31,14 @@ export function handleApiError(error: unknown): NextResponse {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (error instanceof Error && error.message === "NOT_FOUND") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  if (error instanceof Error && error.message === "INVALID_SYMBOL") {
+    return NextResponse.json({ error: "Invalid symbol" }, { status: 400 });
+  }
+
   if (error instanceof z.ZodError) {
     return NextResponse.json(
       { error: "Validation failed", details: error.issues },
@@ -39,9 +47,17 @@ export function handleApiError(error: unknown): NextResponse {
   }
 
   if (error instanceof Error) {
-    console.error("[API Error]", error.message);
+    console.error("[API Error]", error.message, error.stack);
+    const message = error.message;
+    const isPrismaStale =
+      message.includes("Cannot read properties of undefined") &&
+      message.includes("create");
     return NextResponse.json(
-      { error: error.message },
+      {
+        error: isPrismaStale
+          ? "Database client is out of date. Restart the dev server (stop npm run dev, then start again) and retry."
+          : message,
+      },
       { status: 500 }
     );
   }

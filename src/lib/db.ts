@@ -17,8 +17,19 @@ function createPrismaClient(): PrismaClient {
   });
 }
 
-export const prisma = globalForPrisma.prisma ?? createPrismaClient();
+/** Dev hot-reload can keep an old PrismaClient missing new models — recreate when stale. */
+function getPrismaClient(): PrismaClient {
+  const cached = globalForPrisma.prisma;
+  if (cached && "finvizCsvImport" in cached && "premiumBucketEntry" in cached && "brokerConnection" in cached) {
+    return cached;
+  }
+  const client = createPrismaClient();
+  if (process.env.NODE_ENV !== "production") {
+    globalForPrisma.prisma = client;
+  }
+  return client;
+}
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+export const prisma = getPrismaClient();
 
 export default prisma;

@@ -532,6 +532,15 @@ export default function JournalPage() {
                   {submitError}
                 </div>
               )}
+              {modalMode === "create" && (
+                <div className="p-3 rounded-lg bg-muted/30 border border-border text-sm text-muted">
+                  Record the day&apos;s Market Environment in{" "}
+                  <Link href={`/accounts/${accountId}/market-command`} className="text-accent hover:underline">
+                    Market Command
+                  </Link>{" "}
+                  for the entry date so this trade is tagged with the current environment.
+                </div>
+              )}
               <Select
                 label="Entry type"
                 value={form.entryType}

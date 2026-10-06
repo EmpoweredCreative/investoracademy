@@ -1,8 +1,9 @@
 import { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import Sidebar from "@/components/Sidebar";
+import AppShell from "@/components/AppShell";
 import { SelectedAccountProvider } from "@/contexts/SelectedAccountContext";
+import { SidebarProvider } from "@/contexts/SidebarContext";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const session = await auth();
@@ -13,12 +14,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <SelectedAccountProvider>
-      <div className="flex min-h-screen">
-        <Sidebar />
-        <main className="flex-1 ml-64">
-          <div className="p-8 max-w-7xl mx-auto">{children}</div>
-        </main>
-      </div>
+      <SidebarProvider>
+        <div className="flex min-h-screen">
+          <AppShell>{children}</AppShell>
+        </div>
+      </SidebarProvider>
     </SelectedAccountProvider>
   );
 }

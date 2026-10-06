@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAuth, handleApiError } from "@/lib/api-helpers";
-import { backfillJournalOptionFinancials } from "@/lib/services/manualEntry";
 import { calculateOptionRiskByCategory } from "@/lib/services/wheelCalculator";
+import { POLICY_TO_MODE } from "@/lib/services/premiumSettlement";
 import { z } from "zod";
 
 /**
@@ -21,10 +21,6 @@ export async function GET(
     if (!account) {
       return NextResponse.json({ error: "Account not found" }, { status: 404 });
     }
-
-    // Auto-backfill: create financial records for any journal option trades
-    // that are missing StrategyInstance / LedgerEntry / basis reduction.
-    await backfillJournalOptionFinancials(accountId);
 
     // Get all underlyings for this account that have remaining stock lots
     const underlyings = await prisma.underlying.findMany({
@@ -368,6 +364,14 @@ export async function PATCH(
       where: { id: data.underlyingId },
       data: updateData,
     });
+
+    // Keep an existing core plan in step with the portfolio's policy dropdown.
+    if (data.premiumPolicy) {
+      await prisma.corePlan.updateMany({
+        where: { underlyingId: data.underlyingId },
+        data: { mode: POLICY_TO_MODE[data.premiumPolicy] },
+      });
+    }
 
     return NextResponse.json({
       underlyingId: updated.id,
