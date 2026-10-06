@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { PieChart } from "lucide-react";
+import { APP_NAME } from "@/lib/brand";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -41,7 +42,7 @@ export default function LoginPage() {
           <PieChart className="w-7 h-7 text-white" />
         </div>
         <h1 className="text-2xl font-bold">Welcome back</h1>
-        <p className="text-muted text-sm mt-2">Sign in to your WheelTracker account</p>
+        <p className="text-muted text-sm mt-2">Sign in to your {APP_NAME} account</p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">

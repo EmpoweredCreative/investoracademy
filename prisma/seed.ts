@@ -467,7 +467,7 @@ async function main() {
   await prisma.notification.create({
     data: {
       userId: user.id,
-      title: "Welcome to WheelTracker",
+      title: "Welcome to WealthOS",
       body: "Your account has been created. Start by adding a trading account and entering your first trade.",
       read: true,
     },

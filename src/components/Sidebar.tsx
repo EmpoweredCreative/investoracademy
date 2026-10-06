@@ -24,6 +24,7 @@ import { useLive } from "@/components/live/LiveProvider";
 import { AnimatedNumber, DeltaChip, LiveDot, fmtUsd } from "@/components/live/primitives";
 import { useSelectedAccount } from "@/contexts/SelectedAccountContext";
 import { useSidebar } from "@/contexts/SidebarContext";
+import { APP_NAME } from "@/lib/brand";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -37,7 +38,7 @@ const accountNavItems = [
 ];
 
 const tradersCornerNavItems = [
-  { href: "/fundamentals", label: "Fundamental Research", icon: Microscope },
+  { href: "/fundamentals", label: "Research", icon: Microscope },
   { href: "/research", label: "Trade Research", icon: LineChart },
   { href: "/market-command", label: "Market Command", icon: Gauge },
   { href: "/ai-chart-assist", label: "AI Chart Assist", icon: Sparkles },
@@ -112,7 +113,7 @@ export default function Sidebar() {
             </div>
             {!collapsed && (
               <span className="leading-tight">
-                <span className="block text-[15px] font-semibold tracking-tight">WheelTracker</span>
+                <span className="block text-[15px] font-semibold tracking-tight">{APP_NAME}</span>
                 <span className="block text-[10px] uppercase tracking-[0.18em] text-muted">Trading desk</span>
               </span>
             )}

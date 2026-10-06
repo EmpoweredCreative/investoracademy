@@ -261,10 +261,19 @@ export const fundamentalResearchPatchSchema = z.object({
   notes: z.string().max(10000).nullable().optional(),
   earningsReviewed: z.boolean().optional(),
   earningsNotes: z.string().max(5000).nullable().optional(),
+  // 1–5 scores (null clears).
+  mgmtCapitalAllocation: z.number().int().min(1).max(5).nullable().optional(),
+  mgmtIncentives: z.number().int().min(1).max(5).nullable().optional(),
+  mgmtExecution: z.number().int().min(1).max(5).nullable().optional(),
+  brandPricingPower: z.number().int().min(1).max(5).nullable().optional(),
+  brandLoyalty: z.number().int().min(1).max(5).nullable().optional(),
+  brandTrust: z.number().int().min(1).max(5).nullable().optional(),
 });
 
 export const fundamentalChatPostSchema = z.object({
   message: z.string().min(1).max(4000),
+  /** Investor lens key (see src/lib/research/lenses.ts); null for no lens. */
+  lens: z.string().max(64).nullish(),
 });
 
 // ─── Core Premium Bucket ────────────────────────────────────

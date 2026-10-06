@@ -2,6 +2,9 @@
 
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import Link from "next/link";
+import { CriteriaEditor } from "@/components/fundamentals/CriteriaEditor";
+import { FinvizConnect } from "@/components/research/FinvizConnect";
 
 export default function SettingsPage() {
   return (
@@ -9,6 +12,14 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold">Settings</h1>
         <p className="text-muted text-sm mt-1">Manage your account preferences</p>
+      </div>
+
+      <div className="space-y-2">
+        <CriteriaEditor />
+        <p className="text-xs text-muted px-1">
+          These are your default criteria, used when no investor lens is selected. To save named strategies with their own
+          Finviz filters and research questions, use Research → Screener.
+        </p>
       </div>
 
       <Card>
@@ -60,12 +71,22 @@ export default function SettingsPage() {
               {process.env.NEXT_PUBLIC_HAS_SENDGRID ? "Connected" : "Not Configured"}
             </Badge>
           </div>
-          <div className="flex items-center justify-between p-3 rounded-lg bg-background border border-border">
+          <Link
+            href="/connect/schwab"
+            className="flex items-center justify-between p-3 rounded-lg bg-background border border-border hover:border-accent/40 transition-colors"
+          >
             <div>
-              <p className="text-sm font-medium">Schwab API</p>
-              <p className="text-xs text-muted">Phase II: Live market data and portfolio sync</p>
+              <p className="text-sm font-medium">Charles Schwab</p>
+              <p className="text-xs text-muted">Read-only sync of positions, trades and fees</p>
             </div>
-            <Badge variant="default">Phase II</Badge>
+            <span className="text-xs text-accent">Manage connection →</span>
+          </Link>
+          <div className="space-y-2 p-3 rounded-lg bg-background border border-border">
+            <div>
+              <p className="text-sm font-medium">Finviz Elite</p>
+              <p className="text-xs text-muted">Powers the Research screener with your own Finviz subscription</p>
+            </div>
+            <FinvizConnect compact />
           </div>
         </div>
       </Card>

@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireAuth, handleApiError } from "@/lib/api-helpers";
 import { aiChartInsightSchema } from "@/lib/validations";
 import { upsertMarketEnvironment } from "@/lib/services/marketEnvironmentService";
 
-const CHART_ANALYSIS_PROMPT = `You are a technical analysis assistant. Analyze this trading chart image and return a JSON object only (no markdown, no explanation) with these exact keys:
+const CHART_ANALYSIS_PROMPT = `You are a technical analysis assistant. Analyze the trading chart image and fill in these fields (use null when something isn't visible on the chart):
 - trendDirection: "BULLISH" | "BEARISH" | "NEUTRAL"
 - maPositioning: "ABOVE_200" | "BELOW_200" | "MIXED" (price vs 200 MA if visible)
 - momentumState: short string describing momentum (e.g. "Strong", "Weak", "Diverging")
@@ -17,6 +18,26 @@ const CHART_ANALYSIS_PROMPT = `You are a technical analysis assistant. Analyze t
 - suggestedEnvironmentLabel: one of "Trending Risk-On", "Mild Risk-On", "Mixed / Transitional", "Mild Risk-Off", "High Vol Risk-Off"
 - confidenceScore: number 0-100
 - evidenceSummary: 2-3 sentence summary of what you see`;
+
+const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+
+const ChartAnalysisSchema = z.object({
+  trendDirection: z.enum(["BULLISH", "BEARISH", "NEUTRAL"]).nullable(),
+  maPositioning: z.enum(["ABOVE_200", "BELOW_200", "MIXED"]).nullable(),
+  momentumState: z.string().nullable(),
+  volumeBehavior: z.enum(["ACCUMULATION", "DISTRIBUTION", "NEUTRAL"]).nullable(),
+  breakoutConsolidation: z.string(),
+  keyLevelZones: z.string(),
+  suggestedEnvironmentLabel: z.enum([
+    "Trending Risk-On",
+    "Mild Risk-On",
+    "Mixed / Transitional",
+    "Mild Risk-Off",
+    "High Vol Risk-Off",
+  ]),
+  confidenceScore: z.number(),
+  evidenceSummary: z.string(),
+});
 
 export async function GET(
   req: NextRequest,
@@ -83,63 +104,44 @@ export async function POST(
         );
       }
 
-      const apiKey = process.env.OPENAI_API_KEY;
-      if (!apiKey) {
+      if (!process.env.ANTHROPIC_API_KEY) {
         return NextResponse.json(
-          { error: "AI chart analysis is not configured (OPENAI_API_KEY)" },
+          { error: "AI chart analysis is not configured (ANTHROPIC_API_KEY)" },
           { status: 503 }
         );
       }
 
-      const bytes = await file.arrayBuffer();
-      const base64 = Buffer.from(bytes).toString("base64");
       const mimeType = file.type || "image/png";
+      if (!SUPPORTED_IMAGE_TYPES.includes(mimeType as (typeof SUPPORTED_IMAGE_TYPES)[number])) {
+        return NextResponse.json({ error: "Upload a PNG, JPEG, GIF or WebP chart image." }, { status: 400 });
+      }
+      const base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
 
-      const openai = new OpenAI({ apiKey });
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        max_tokens: 800,
+      const client = new Anthropic();
+      const response = await client.messages.parse({
+        model: "claude-opus-5-5",
+        max_tokens: 4000,
+        output_config: { effort: "low", format: zodOutputFormat(ChartAnalysisSchema) },
+        system: CHART_ANALYSIS_PROMPT,
         messages: [
-          { role: "system", content: CHART_ANALYSIS_PROMPT },
           {
             role: "user",
             content: [
               {
-                type: "image_url",
-                image_url: {
-                  url: `data:${mimeType};base64,${base64}`,
-                },
+                type: "image",
+                source: { type: "base64", media_type: mimeType as (typeof SUPPORTED_IMAGE_TYPES)[number], data: base64 },
               },
+              { type: "text", text: `Analyze this ${symbol.toUpperCase()}${timeframe ? ` ${timeframe}` : ""} chart.` },
             ],
           },
         ],
       });
 
-      const rawContent = response.choices[0]?.message?.content?.trim() ?? "{}";
-      let parsed: unknown;
-      try {
-        const jsonStr = rawContent.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
-        parsed = JSON.parse(jsonStr);
-      } catch {
-        return NextResponse.json(
-          { error: "AI returned invalid JSON", raw: rawContent.slice(0, 200) },
-          { status: 502 }
-        );
+      if (response.stop_reason === "refusal" || !response.parsed_output) {
+        return NextResponse.json({ error: "Claude could not analyze that image. Try a clearer chart screenshot." }, { status: 502 });
       }
-
-      const validated = z
-        .object({
-          trendDirection: z.enum(["BULLISH", "BEARISH", "NEUTRAL"]).nullable(),
-          maPositioning: z.enum(["ABOVE_200", "BELOW_200", "MIXED"]).nullable(),
-          momentumState: z.string().nullable().optional(),
-          volumeBehavior: z.enum(["ACCUMULATION", "DISTRIBUTION", "NEUTRAL"]).nullable(),
-          breakoutConsolidation: z.string().optional(),
-          keyLevelZones: z.unknown().optional(),
-          suggestedEnvironmentLabel: z.string().optional(),
-          confidenceScore: z.number().min(0).max(100),
-          evidenceSummary: z.string().optional(),
-        })
-        .parse(parsed);
+      const validated = response.parsed_output;
+      const parsed = validated;
 
       const date = new Date(dateStr + "T00:00:00.000Z");
 
@@ -155,7 +157,7 @@ export async function POST(
             aiMAStatus: validated.maPositioning,
             aiVolumeCondition: validated.volumeBehavior,
             aiStructureNotes: validated.evidenceSummary ?? null,
-            aiConfidenceScore: validated.confidenceScore,
+            aiConfidenceScore: Math.max(0, Math.min(100, validated.confidenceScore)),
             sourceType: "CHART_UPLOAD",
             rawAIResponse: parsed as object,
           },

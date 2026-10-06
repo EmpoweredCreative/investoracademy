@@ -185,30 +185,3 @@ export async function refreshFundamentalsBatch(
 
   return { success, failed };
 }
-
-export function snapshotToMetrics(
-  snap: {
-    trailingPe: { toString(): string } | null;
-    forwardPe: { toString(): string } | null;
-    pegRatio: { toString(): string } | null;
-    enterpriseToEbitda: { toString(): string } | null;
-    priceToBook: { toString(): string } | null;
-    priceToSales: { toString(): string } | null;
-    debtToEquity: { toString(): string } | null;
-    returnOnEquity: { toString(): string } | null;
-  } | null
-) {
-  if (!snap) return {};
-  const p = (d: { toString(): string } | null) =>
-    d !== null ? parseFloat(d.toString()) : null;
-  return {
-    trailingPe: p(snap.trailingPe),
-    forwardPe: p(snap.forwardPe),
-    pegRatio: p(snap.pegRatio),
-    enterpriseToEbitda: p(snap.enterpriseToEbitda),
-    priceToBook: p(snap.priceToBook),
-    priceToSales: p(snap.priceToSales),
-    debtToEquity: p(snap.debtToEquity),
-    returnOnEquity: p(snap.returnOnEquity),
-  };
-}

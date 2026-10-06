@@ -260,6 +260,9 @@ model User {
   aiChartInsights     AIChartInsight[]
   marketEnvironments  MarketEnvironment[]
   brokerConnections   BrokerConnection[]
+  apiCredentials      ApiCredential[]
+  researchCriteria    ResearchCriteriaProfile?
+  researchStrategies  ResearchStrategy[]
 }
 
 // OAuth link to a brokerage login. Tokens are AES-256-GCM encrypted (src/lib/crypto.ts).
@@ -329,6 +332,10 @@ model Account {
   fundamentalChatThreads   FundamentalChatThread[]
   finvizCsvImports         FinvizCsvImport[]
   premiumBucketEntries     PremiumBucketEntry[]
+  dcfModels                DcfModel[]
+  companyReports           CompanyReport[]
+  companyReportJobs        CompanyReportJob[]
+  companyScores            CompanyScore[]
 
   @@unique([userId, name])
 }
@@ -783,6 +790,8 @@ model FundamentalSnapshot {
   profitMargins      Decimal? @db.Decimal(12, 4)
   nextEarningsDate   DateTime? @db.Date
   raw                Json?
+  financialHistory Json?    // Annual statements from Yahoo fundamentalsTimeSeries (for DCF)
+  historyFetchedAt DateTime?
 
   account            Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
@@ -840,9 +849,143 @@ model FundamentalChatMessage {
   role            String
   content         String
   contextSnapshot Json?
+  toolEvents      Json?    // Claude tool calls made while answering (name, input, summary)
   createdAt       DateTime @default(now())
 
   thread          FundamentalChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
   @@index([threadId])
+}
+
+// Per-user research thresholds (see src/lib/fundamentals/criteria.ts for the shape).
+model ResearchCriteriaProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  profile   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Saved DCF runs per symbol (assumptions + computed outputs).
+model DcfModel {
+  id          String   @id @default(cuid())
+  accountId   String
+  symbol      String
+  name        String?
+  assumptions Json
+  outputs     Json
+  createdBy   String   @default("user") // "user" | "claude"
+  createdAt   DateTime @default(now())
+
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, symbol, createdAt])
+}
+
+// Annual reports (10-K / 20-F) from SEC EDGAR. Public and immutable, so shared across accounts.
+model SecFiling {
+  id           String    @id @default(cuid())
+  cik          String
+  symbol       String
+  accession    String    @unique
+  form         String    // 10-K | 20-F (amendments only when no original exists)
+  fiscalYear   Int
+  periodEnd    DateTime
+  filedAt      DateTime
+  url          String
+  sections     Json      // { business, riskFactors, mdna, marketRisk } plain text
+  riskHeadings Json      // [{ category, title }]
+  digest       Json?     // AI summary of the filing (see src/lib/sec/digest.ts)
+  digestModel  String?
+  digestedAt   DateTime?
+  fetchedAt    DateTime  @default(now())
+
+  @@index([symbol])
+  @@index([cik])
+}
+
+// AI company reports, one per symbol and lens; history is kept.
+model CompanyReport {
+  id        String   @id @default(cuid())
+  accountId String
+  symbol    String
+  lensKey   String   // buffett | lynch | druckenmiller | strategy:<id> | none
+  report    Json
+  sources   Json?
+  model     String
+  createdAt DateTime @default(now())
+
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, symbol, lensKey, createdAt])
+}
+
+// User-defined research strategies: Finviz screen + scoring criteria + research questions.
+model ResearchStrategy {
+  id            String   @id @default(cuid())
+  userId        String
+  name          String
+  baseLens      String?
+  finvizFilters Json     // string[] of Finviz filter codes
+  criteria      Json     // CriteriaProfile (src/lib/fundamentals/criteria.ts)
+  questions     Json     // string[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Per-user API keys for third-party data services (e.g. Finviz Elite), encrypted with TOKEN_ENCRYPTION_KEY.
+model ApiCredential {
+  id         String    @id @default(cuid())
+  userId     String
+  provider   String    // finviz
+  secret     String    // encryptSecret() payload, never returned to the browser
+  hint       String    // last 4 characters, for display
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+}
+
+// Background Company Report generation, so progress survives tab switches and page changes.
+model CompanyReportJob {
+  id         String    @id @default(cuid())
+  accountId  String
+  symbol     String
+  lensKey    String
+  status     String    // RUNNING | DONE | ERROR
+  stages     Json      @default("[]")
+  error      String?
+  reportId   String?
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, symbol, lensKey, startedAt])
+}
+
+// Saved WealthOS Scores per stock and lens (see src/lib/research/score.ts).
+model CompanyScore {
+  id         String   @id @default(cuid())
+  accountId  String
+  symbol     String
+  lensKey    String
+  score      Int?
+  confidence String   // HIGH | MEDIUM | LOW
+  result     Json     // ScoreResult: pillars, caps, strengths, weaknesses
+  computedAt DateTime @default(now())
+
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, symbol, lensKey])
+  @@index([accountId, lensKey])
 }

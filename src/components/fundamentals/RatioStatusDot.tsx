@@ -1,4 +1,4 @@
-import type { RatioStatus } from "@/lib/fundamentals/ratioBands";
+import type { CriteriaStatus as RatioStatus } from "@/lib/fundamentals/criteria";
 
 const STYLES: Record<RatioStatus, string> = {
   green: "bg-emerald-500 ring-emerald-500/30",

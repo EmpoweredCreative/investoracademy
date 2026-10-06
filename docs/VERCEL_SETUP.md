@@ -1,4 +1,4 @@
-# Step-by-Step: Setting Up WheelTracker on Vercel
+# Step-by-Step: Setting Up WealthOS on Vercel
 
 This guide walks you through deploying the project on Vercel and obtaining every variable needed for your environment. **Local development:** copy `.env.example` to `.env` in the project root and fill in the values below (you won’t see `.env` in the file manager if it’s gitignored; create it from the example). **Vercel:** use Project → Settings → Environment Variables.
 
@@ -7,7 +7,7 @@ This guide walks you through deploying the project on Vercel and obtaining every
 ## Prerequisites
 
 - A [Vercel account](https://vercel.com/signup) (GitHub/GitLab/Bitbucket or email)
-- Your WheelTracker code in a Git repository (GitHub recommended)
+- Your WealthOS code in a Git repository (GitHub recommended)
 - (Optional) A [SendGrid account](https://sendgrid.com) for email
 
 ---
@@ -16,7 +16,7 @@ This guide walks you through deploying the project on Vercel and obtaining every
 
 1. Go to [vercel.com](https://vercel.com) and sign in.
 2. Click **Add New…** → **Project**.
-3. **Import** your Git repository (e.g. `your-username/investoracademy-com` or wherever WheelTracker lives).
+3. **Import** your Git repository (e.g. `your-username/investoracademy-com` or wherever WealthOS lives).
 4. Configure the project:
    - **Framework Preset**: Next.js (should be auto-detected)
    - **Root Directory**: leave as `.` unless the app lives in a subfolder
@@ -43,7 +43,7 @@ This guide walks you through deploying the project on Vercel and obtaining every
    POSTGRES_PRISMA_URL="postgres://default:xxxxx@ep-xxx.us-east-1.postgres.vercel-storage.com:5432/verceldb?sslmode=require&pgbouncer=true"
    ```
 8. **Link the database to your project** (if not already):
-   - In the database view, use **Connect Project** and select your WheelTracker project.
+   - In the database view, use **Connect Project** and select your WealthOS project.
    - This will add the Postgres env vars to that project.
 9. For Prisma you need the **non-pgbouncer** URL for migrations and for the app if you’re not using Prisma Data Proxy. Use:
    - **`POSTGRES_URL`** as your app’s database URL.
@@ -119,7 +119,7 @@ So:
    - Note the **from email** you verify (e.g. `noreply@yourdomain.com`). This is `SENDGRID_FROM_EMAIL`.
 3. **Create an API key**:
    - **Settings → API Keys → Create API Key**.
-   - Name it (e.g. `WheelTracker production`).
+   - Name it (e.g. `WealthOS production`).
    - Choose **Restricted Access**; enable **Mail Send → Full Access** (or minimal needed).
    - Create and **copy the key** (shown only once).
 4. In Vercel **Environment Variables** add:

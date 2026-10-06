@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAuth, handleApiError } from "@/lib/api-helpers";
 import { requireAccountForUser, normalizeSymbol } from "@/lib/fundamentals/accountAccess";
-import { scoreAllRatios, countByStatus } from "@/lib/fundamentals/ratioBands";
-import { snapshotToMetrics } from "@/lib/fundamentals/yahooFundamentals";
+import { evaluateSnapshot, fxForSnapshot, getUserCriteria, latestMarginOfSafety } from "@/lib/fundamentals/research";
 import { fundamentalResearchPatchSchema } from "@/lib/validations";
 
 export async function GET(
@@ -36,9 +35,12 @@ export async function GET(
       throw new Error("NOT_FOUND");
     }
 
-    const metrics = snapshotToMetrics(snapshot);
-    const ratios = scoreAllRatios(metrics);
-    const ryg = countByStatus(ratios);
+    const [profile, marginOfSafety, fx] = await Promise.all([
+      getUserCriteria(userId),
+      latestMarginOfSafety(accountId, symbol),
+      fxForSnapshot(snapshot),
+    ]);
+    const { evaluation, ratios, ryg } = evaluateSnapshot(snapshot, profile, marginOfSafety, fx);
 
     return NextResponse.json({
       symbol,
@@ -53,6 +55,7 @@ export async function GET(
         : null,
       ratios,
       ryg,
+      evaluation: { score: evaluation.score, passScore: evaluation.passScore, verdict: evaluation.verdict, failedRequired: evaluation.failedRequired },
       research,
       thread: thread
         ? {
@@ -90,6 +93,16 @@ export async function PATCH(
     if (data.earningsNotes !== undefined) update.earningsNotes = data.earningsNotes;
     if (data.earningsReviewed === true) update.earningsReviewedAt = new Date();
     if (data.earningsReviewed === false) update.earningsReviewedAt = null;
+    for (const key of [
+      "mgmtCapitalAllocation",
+      "mgmtIncentives",
+      "mgmtExecution",
+      "brandPricingPower",
+      "brandLoyalty",
+      "brandTrust",
+    ] as const) {
+      if (data[key] !== undefined) update[key] = data[key];
+    }
 
     const research = await prisma.fundamentalResearch.upsert({
       where: { accountId_symbol: { accountId, symbol } },

@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { APP_DESCRIPTION, APP_NAME } from "@/lib/brand";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "WheelTracker - Options Trading & Wealth Wheel Platform",
-  description:
-    "Professional investment tracking platform for options trading, Wealth Wheel allocation, journaling, and reinvest alerts.",
+  title: APP_NAME,
+  description: APP_DESCRIPTION,
 };
 
 /** Applies the saved theme before first paint so there's no flash. */

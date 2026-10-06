@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { PieChart } from "lucide-react";
+import { APP_NAME } from "@/lib/brand";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -50,7 +51,7 @@ export default function RegisterPage() {
         </div>
         <h1 className="text-2xl font-bold">Create your account</h1>
         <p className="text-muted text-sm mt-2">
-          Start tracking your options trades with WheelTracker
+          Start running your portfolio with {APP_NAME}
         </p>
       </div>
 

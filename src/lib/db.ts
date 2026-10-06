@@ -20,7 +20,7 @@ function createPrismaClient(): PrismaClient {
 /** Dev hot-reload can keep an old PrismaClient missing new models — recreate when stale. */
 function getPrismaClient(): PrismaClient {
   const cached = globalForPrisma.prisma;
-  if (cached && "finvizCsvImport" in cached && "premiumBucketEntry" in cached && "brokerConnection" in cached) {
+  if (cached && "finvizCsvImport" in cached && "premiumBucketEntry" in cached && "brokerConnection" in cached && "dcfModel" in cached && "secFiling" in cached && "researchStrategy" in cached && "apiCredential" in cached && "companyReportJob" in cached && "companyScore" in cached) {
     return cached;
   }
   const client = createPrismaClient();

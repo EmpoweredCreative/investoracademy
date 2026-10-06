@@ -49,9 +49,10 @@ export function handleApiError(error: unknown): NextResponse {
   if (error instanceof Error) {
     console.error("[API Error]", error.message, error.stack);
     const message = error.message;
+    // A dev server started before `prisma generate` lacks newly added models.
     const isPrismaStale =
       message.includes("Cannot read properties of undefined") &&
-      message.includes("create");
+      /reading '(create|createMany|find\w*|upsert|update\w*|delete\w*|count)'/.test(message);
     return NextResponse.json(
       {
         error: isPrismaStale

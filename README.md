@@ -1,4 +1,4 @@
-# WheelTracker
+# WealthOS
 
 Professional investment tracking platform for options trading, Wealth Wheel allocation, journaling, and reinvest alerts.
 

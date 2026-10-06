@@ -1,8 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAuth, handleApiError } from "@/lib/api-helpers";
 import { requireAccountForUser } from "@/lib/fundamentals/accountAccess";
 import { refreshFundamentalsBatch } from "@/lib/fundamentals/yahooFundamentals";
+
+// Yahoo fetches run sequentially with a delay, so a full watchlist takes a while.
+export const maxDuration = 300;
 
 export async function POST(
   req: NextRequest,
@@ -36,8 +39,10 @@ export async function POST(
       data: { yahooFetchStatus: "PENDING", yahooFetchError: null },
     });
 
-    void refreshFundamentalsBatch(accountId, symbols).catch((err) =>
-      console.error("[fundamentals] refresh-all batch failed", err)
+    after(() =>
+      refreshFundamentalsBatch(accountId, symbols).catch((err) =>
+        console.error("[fundamentals] refresh-all batch failed", err)
+      )
     );
 
     return NextResponse.json({

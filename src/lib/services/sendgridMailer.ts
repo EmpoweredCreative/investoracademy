@@ -1,6 +1,7 @@
 import sgMail from "@sendgrid/mail";
 import { prisma } from "@/lib/db";
 import { Prisma } from "@prisma/client";
+import { APP_NAME } from "@/lib/brand";
 
 if (process.env.SENDGRID_API_KEY) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -65,7 +66,7 @@ export async function sendDailyDigest(userId: string) {
     await sgMail.send({
       to: user.email,
       from: FROM_EMAIL,
-      subject: `WheelTracker Daily Digest - ${new Date().toLocaleDateString()}`,
+      subject: `${APP_NAME} Daily Digest - ${new Date().toLocaleDateString()}`,
       html,
     });
 
@@ -116,7 +117,7 @@ export async function sendInstantNotification(
   await sgMail.send({
     to: user.email,
     from: FROM_EMAIL,
-    subject: `WheelTracker: ${subject}`,
+    subject: `${APP_NAME}: ${subject}`,
     html: `<div style="font-family: sans-serif; padding: 20px;"><h2>${subject}</h2><p>${body}</p></div>`,
   });
 }
@@ -136,7 +137,7 @@ function buildDigestHtml(data: DigestData): string {
 
   return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-      <h1 style="color: #1e293b; font-size: 24px;">WheelTracker Daily Digest</h1>
+      <h1 style="color: #1e293b; font-size: 24px;">${APP_NAME} Daily Digest</h1>
       <p style="color: #64748b;">Hello ${data.userName},</p>
       <p style="color: #64748b;">Here's your trading summary for today:</p>
       <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
@@ -152,7 +153,7 @@ function buildDigestHtml(data: DigestData): string {
           ${accountRows}
         </tbody>
       </table>
-      <p style="color: #94a3b8; font-size: 12px;">This email was sent by WheelTracker. Manage your preferences in the app.</p>
+      <p style="color: #94a3b8; font-size: 12px;">This email was sent by ${APP_NAME}. Manage your preferences in the app.</p>
     </div>
   `;
 }
