@@ -14,6 +14,7 @@ export type RoutineSymbol = {
 /** Indices from the top-down routine (Image 1) */
 export const INDICES: RoutineSymbol[] = [
   { symbol: "SPY", name: "S&P", category: "INDICES" },
+  { symbol: "RSP", name: "S&P Equal Weight", category: "INDICES" },
   { symbol: "DIA", name: "Dow Jones", category: "INDICES" },
   { symbol: "QQQ", name: "NASDAQ", category: "INDICES" },
   { symbol: "IWM", name: "Russell 2000", category: "INDICES" },
@@ -50,3 +51,21 @@ export function getSymbolByName(name: string): RoutineSymbol | undefined {
 export function getSymbolBySymbol(symbol: string): RoutineSymbol | undefined {
   return ALL_ROUTINE_SYMBOLS.find((s) => s.symbol === symbol.toUpperCase());
 }
+
+/** Yahoo ticker for a routine symbol (VIX is an index, not an ETF). */
+export function yahooSymbol(symbol: string): string {
+  return symbol === VIX_SYMBOL ? "^VIX" : symbol;
+}
+
+/** Futures board for Step 1 — professionals start with the futures market. */
+export const FUTURES: { symbol: string; label: string; name: string }[] = [
+  { symbol: "ES=F", label: "/ES", name: "S&P 500" },
+  { symbol: "NQ=F", label: "/NQ", name: "Nasdaq 100" },
+  { symbol: "YM=F", label: "/YM", name: "Dow" },
+  { symbol: "RTY=F", label: "/RTY", name: "Russell 2000" },
+  { symbol: "DX-Y.NYB", label: "DXY", name: "US Dollar" },
+  { symbol: "CL=F", label: "/CL", name: "Crude Oil" },
+  { symbol: "GC=F", label: "/GC", name: "Gold" },
+  { symbol: "SI=F", label: "/SI", name: "Silver" },
+  { symbol: "^VIX", label: "VIX", name: "Volatility" },
+];

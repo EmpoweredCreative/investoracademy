@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -9,163 +9,41 @@ import { Input } from "@/components/ui/Input";
 import { Tabs } from "@/components/ui/Tabs";
 import {
   ArrowLeft,
+  ArrowRight,
   Gauge,
-  Loader2,
 } from "lucide-react";
-import { INDICES, SECTORS } from "@/lib/marketRoutineSymbols";
-
-const BIAS_OPTIONS = [
-  { value: "", label: "—" },
-  { value: "BULLISH", label: "Bullish" },
-  { value: "BEARISH", label: "Bearish" },
-  { value: "NEUTRAL", label: "Neutral" },
-];
-
-function BiasLight({ bias }: { bias: string | null }) {
-  if (!bias) return null;
-  const config =
-    bias === "BULLISH"
-      ? { bg: "bg-emerald-500", ring: "ring-emerald-500/30", label: "Bullish" }
-      : bias === "BEARISH"
-        ? { bg: "bg-red-500", ring: "ring-red-500/30", label: "Bearish" }
-        : { bg: "bg-amber-500", ring: "ring-amber-500/30", label: "Neutral" };
-  return (
-    <span
-      className={`inline-block w-2 h-2 rounded-full ${config.bg} ring-2 ${config.ring}`}
-      title={config.label}
-      aria-label={config.label}
-    />
-  );
-}
+import { localDateStr } from "@/lib/routineSteps";
 
 export default function MarketCommandPage() {
   const params = useParams();
   const accountId = params.id as string;
-  const [dateStr, setDateStr] = useState(() => {
-    const d = new Date();
-    return d.toISOString().slice(0, 10);
-  });
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [dateStr, setDateStr] = useState(localDateStr);
   const [data, setData] = useState<{
     routine: Record<string, unknown> | null;
     environment: Record<string, unknown> | null;
     aiInsights: Array<Record<string, unknown>>;
   } | null>(null);
 
-  const [form, setForm] = useState({
-    symbolBiases: {} as Record<string, { bias: string; dailyVolume: string }>,
-    narrativeTags: "",
-    notes: "",
-    routineCompleted: false,
-  });
-
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(
-        `/api/accounts/${accountId}/market-command/routine?date=${dateStr}`
-      );
-      const json = await res.json();
-      setData({
-        routine: json.routine,
-        environment: json.environment,
-        aiInsights: json.aiInsights ?? [],
-      });
-      if (json.routine) {
-        const biases: Record<string, { bias: string; dailyVolume: string }> = {};
-        for (const s of json.routine.symbolBiases ?? []) {
-          biases[s.symbol] = {
-            bias: s.bias ?? "",
-            dailyVolume: s.dailyVolume != null ? String(s.dailyVolume) : "",
-          };
-        }
-        setForm({
-          symbolBiases: biases,
-          narrativeTags: Array.isArray(json.routine.narrativeTags)
-            ? json.routine.narrativeTags.join(", ")
-            : "",
-          notes: json.routine.notes ?? "",
-          routineCompleted: json.routine.routineCompleted ?? false,
-        });
-      } else {
-        setForm((f) => ({ ...f, symbolBiases: {} }));
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [accountId, dateStr]);
-
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  const handleSaveRoutine = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const symbolBiases = [
-        ...INDICES.map((s) => {
-          const v = form.symbolBiases[s.symbol]?.dailyVolume?.trim();
-          const vol = v ? parseFloat(v) : NaN;
-          return {
-            symbol: s.symbol,
-            category: "INDICES" as const,
-            bias: form.symbolBiases[s.symbol]?.bias || null,
-            dailyVolume: v && !isNaN(vol) ? vol : null,
-          };
-        }),
-        ...SECTORS.map((s) => {
-          const v = form.symbolBiases[s.symbol]?.dailyVolume?.trim();
-          const vol = v ? parseFloat(v) : NaN;
-          return {
-            symbol: s.symbol,
-            category: "SECTORS" as const,
-            bias: form.symbolBiases[s.symbol]?.bias || null,
-            dailyVolume: v && !isNaN(vol) ? vol : null,
-          };
-        }),
-      ];
-      await fetch(`/api/accounts/${accountId}/market-command/routine`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date: dateStr,
-          narrativeTags: form.narrativeTags
-            ? form.narrativeTags.split(",").map((s) => s.trim()).filter(Boolean)
-            : [],
-          notes: form.notes || null,
-          routineCompleted: form.routineCompleted,
-          symbolBiases,
-        }),
-      });
-      await fetchData();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const setSymbolBias = (symbol: string, field: "bias" | "dailyVolume", value: string) => {
-    setForm((f) => ({
-      ...f,
-      symbolBiases: {
-        ...f.symbolBiases,
-        [symbol]: {
-          ...(f.symbolBiases[symbol] ?? { bias: "", dailyVolume: "" }),
-          [field]: value,
-        },
-      },
-    }));
-  };
+    fetch(`/api/accounts/${accountId}/market-command/routine?date=${dateStr}`)
+      .then((res) => res.json())
+      .then((json) =>
+        setData({
+          routine: json.routine,
+          environment: json.environment,
+          aiInsights: json.aiInsights ?? [],
+        })
+      )
+      .catch(() => {});
+  }, [accountId, dateStr]);
 
   const env = data?.environment as { environmentScore?: number; environmentLabel?: string; environmentConfidence?: number; alignmentScore?: number } | null;
 
   const tabs = [
-    { id: "routine", label: "Daily Routine" },
     { id: "alignment", label: "Strategy Alignment" },
     { id: "analytics", label: "Analytics" },
   ];
-  const [activeTab, setActiveTab] = useState("routine");
+  const [activeTab, setActiveTab] = useState("alignment");
 
   return (
     <div className="space-y-6">
@@ -182,11 +60,22 @@ export default function MarketCommandPage() {
               Market Command Center
             </h1>
             <p className="text-muted text-sm">
-              Daily market routine and market environment
+              Market environment, strategy alignment and analytics
             </p>
           </div>
         </div>
       </div>
+
+      <Link
+        href="/traders-corner"
+        className="flex items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 text-sm hover:bg-accent/10 transition-colors"
+      >
+        <span>
+          <span className="font-semibold">The daily routine now lives in Trader&apos;s Corner</span>
+          <span className="text-muted"> — your index and sector calls there feed the alignment below.</span>
+        </span>
+        <ArrowRight className="w-4 h-4 text-accent shrink-0" />
+      </Link>
 
       <div className="flex items-center gap-4">
         <label className="text-sm font-medium text-foreground">Date</label>
@@ -201,152 +90,6 @@ export default function MarketCommandPage() {
       <Tabs tabs={tabs} onChange={setActiveTab}>
         {() => (
           <>
-            {activeTab === "routine" && (
-              <div className="mt-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Top-Down Market Routine</CardTitle>
-                    <p className="text-sm text-muted">Bias + daily volume per index and sector. Volatility from VIX.</p>
-                  </CardHeader>
-                  {loading ? (
-                    <div className="flex items-center gap-2 text-muted">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Loading…
-                    </div>
-                  ) : (
-                    <form onSubmit={handleSaveRoutine} className="space-y-6">
-                      <div>
-                        <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Indices</p>
-                        <div className="rounded-lg border border-border overflow-hidden">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="bg-surface border-b border-border">
-                                <th className="text-left py-2 px-3 font-semibold">Index Name</th>
-                                <th className="text-left py-2 px-3 font-semibold">Bias</th>
-                                <th className="text-left py-2 px-3 font-semibold">Daily Volume</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {INDICES.map((s) => (
-                                <tr key={s.symbol} className="border-b border-border/50 last:border-0">
-                                  <td className="py-2 px-3">
-                                    <span className="inline-flex items-center gap-2">
-                                      {s.name}
-                                      {form.symbolBiases[s.symbol]?.bias && (
-                                        <BiasLight bias={form.symbolBiases[s.symbol]?.bias ?? null} />
-                                      )}
-                                    </span>
-                                  </td>
-                                  <td className="py-2 px-3">
-                                    <select
-                                      value={form.symbolBiases[s.symbol]?.bias ?? ""}
-                                      onChange={(e) => setSymbolBias(s.symbol, "bias", e.target.value)}
-                                      className="w-full max-w-28 px-2 py-1 rounded bg-surface border border-border text-foreground text-sm"
-                                    >
-                                      {BIAS_OPTIONS.map((o) => (
-                                        <option key={o.value} value={o.value}>{o.label}</option>
-                                      ))}
-                                    </select>
-                                  </td>
-                                  <td className="py-2 px-3">
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      placeholder="—"
-                                      value={form.symbolBiases[s.symbol]?.dailyVolume ?? ""}
-                                      onChange={(e) => setSymbolBias(s.symbol, "dailyVolume", e.target.value)}
-                                      className="w-full max-w-24 px-2 py-1 rounded bg-surface border border-border text-foreground text-sm"
-                                    />
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-
-                      <div>
-                        <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Sectors</p>
-                        <div className="rounded-lg border border-border overflow-hidden">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="bg-surface border-b border-border">
-                                <th className="text-left py-2 px-3 font-semibold">Symbol</th>
-                                <th className="text-left py-2 px-3 font-semibold">Sector</th>
-                                <th className="text-left py-2 px-3 font-semibold">Bias</th>
-                                <th className="text-left py-2 px-3 font-semibold">Daily Volume</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {SECTORS.map((s) => (
-                                <tr key={s.symbol} className="border-b border-border/50 last:border-0">
-                                  <td className="py-2 px-3 font-mono">{s.symbol}</td>
-                                  <td className="py-2 px-3">
-                                    <span className="inline-flex items-center gap-2">
-                                      {s.name}
-                                      {form.symbolBiases[s.symbol]?.bias && (
-                                        <BiasLight bias={form.symbolBiases[s.symbol]?.bias ?? null} />
-                                      )}
-                                    </span>
-                                  </td>
-                                  <td className="py-2 px-3">
-                                    <select
-                                      value={form.symbolBiases[s.symbol]?.bias ?? ""}
-                                      onChange={(e) => setSymbolBias(s.symbol, "bias", e.target.value)}
-                                      className="w-full max-w-28 px-2 py-1 rounded bg-surface border border-border text-foreground text-sm"
-                                    >
-                                      {BIAS_OPTIONS.map((o) => (
-                                        <option key={o.value} value={o.value}>{o.label}</option>
-                                      ))}
-                                    </select>
-                                  </td>
-                                  <td className="py-2 px-3">
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      placeholder="—"
-                                      value={form.symbolBiases[s.symbol]?.dailyVolume ?? ""}
-                                      onChange={(e) => setSymbolBias(s.symbol, "dailyVolume", e.target.value)}
-                                      className="w-full max-w-24 px-2 py-1 rounded bg-surface border border-border text-foreground text-sm"
-                                    />
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-
-                      <Input
-                        label="Narrative tags (comma-separated)"
-                        placeholder="e.g. Fed, earnings"
-                        value={form.narrativeTags}
-                        onChange={(e) => setForm((f) => ({ ...f, narrativeTags: e.target.value }))}
-                      />
-                      <textarea
-                        className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-foreground text-sm min-h-[80px]"
-                        placeholder="Notes…"
-                        value={form.notes}
-                        onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-                      />
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={form.routineCompleted}
-                          onChange={(e) => setForm((f) => ({ ...f, routineCompleted: e.target.checked }))}
-                          className="rounded border-border"
-                        />
-                        <span className="text-sm">Routine completed</span>
-                      </label>
-                      <Button type="submit" loading={saving}>
-                        Save Routine
-                      </Button>
-                    </form>
-                  )}
-                </Card>
-              </div>
-            )}
-
             {activeTab === "alignment" && (
               <StrategyAlignmentTab accountId={accountId} dateStr={dateStr} environmentLabel={env?.environmentLabel} />
             )}

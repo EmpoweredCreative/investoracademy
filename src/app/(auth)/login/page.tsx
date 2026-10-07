@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { PieChart } from "lucide-react";
+import { StackedLogo } from "@/components/BrandMark";
 import { APP_NAME } from "@/lib/brand";
 
 export default function LoginPage() {
@@ -38,8 +38,8 @@ export default function LoginPage() {
   return (
     <div className="space-y-8">
       <div className="text-center">
-        <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center mx-auto mb-4">
-          <PieChart className="w-7 h-7 text-white" />
+        <div className="mx-auto mb-4 w-52">
+          <StackedLogo transparent />
         </div>
         <h1 className="text-2xl font-bold">Welcome back</h1>
         <p className="text-muted text-sm mt-2">Sign in to your {APP_NAME} account</p>

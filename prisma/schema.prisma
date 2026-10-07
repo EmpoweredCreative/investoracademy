@@ -669,6 +669,7 @@ model MarketRoutineEntry {
   narrativeTags        String[]
   notes                String?
   routineCompleted     Boolean             @default(false)
+  stepsCompleted       String[]            @default([]) // Trader's Corner routine step keys done today
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
 

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { PieChart } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 import { APP_NAME } from "@/lib/brand";
 
 export default function RegisterPage() {
@@ -46,8 +46,8 @@ export default function RegisterPage() {
   return (
     <div className="space-y-8">
       <div className="text-center">
-        <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center mx-auto mb-4">
-          <PieChart className="w-7 h-7 text-white" />
+        <div className="flex justify-center mb-4">
+          <BrandMark height={56} />
         </div>
         <h1 className="text-2xl font-bold">Create your account</h1>
         <p className="text-muted text-sm mt-2">

@@ -10,15 +10,9 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { PlusCircle, ArrowRight, X, Archive, AlertTriangle } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ACCOUNT_TOOL_LABELS } from "@/lib/sections";
 
-const TOOL_LABELS: Record<string, string> = {
-  statement: "Statement",
-  wheel: "Wealth Wheel",
-  journal: "Journal",
-  research: "Research",
-  reinvest: "Reinvest",
-  core: "Core Premium",
-};
+const TOOL_LABELS: Record<string, string> = { ...ACCOUNT_TOOL_LABELS, reinvest: "Reinvest" };
 
 interface Account {
   id: string;

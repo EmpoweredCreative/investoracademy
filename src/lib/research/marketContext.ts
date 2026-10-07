@@ -1,4 +1,5 @@
 import YahooFinance from "yahoo-finance2";
+import { sma } from "@/lib/marketdata/technicals";
 
 /** Market-side context for lenses: insider/ownership (Lynch), revisions, trend and macro (Druckenmiller). */
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey", "ripHistorical"] });
@@ -104,11 +105,10 @@ export async function getPriceTrend(symbol: string): Promise<PriceTrend> {
   )) as { quotes?: { close?: number | null }[] };
   const closes = (chart.quotes ?? []).map((q) => q.close).filter((c): c is number => typeof c === "number");
   const last = closes.at(-1) ?? null;
-  const avg = (n: number) => (closes.length >= n ? closes.slice(-n).reduce((s, c) => s + c, 0) / n : null);
   const ago = (n: number) => (closes.length > n ? closes[closes.length - 1 - n] : null);
   const change = (from: number | null) => (last != null && from ? round(((last - from) / from) * 100, 1) : null);
-  const sma50 = avg(50);
-  const sma200 = avg(200);
+  const sma50 = sma(closes, 50);
+  const sma200 = sma(closes, 200);
   const high = closes.length ? Math.max(...closes.slice(-252)) : null;
   return {
     price: round(last),

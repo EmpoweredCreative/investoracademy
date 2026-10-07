@@ -23,6 +23,10 @@
   --free-money: #12a150;
   --shadow: 0 1px 2px rgb(20 20 30 / 0.04), 0 4px 16px -6px rgb(20 20 30 / 0.08);
   --grid-line: rgb(20 20 30 / 0.05);
+  /* Chart series slots (validated categorical order: blue, orange, aqua) */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
   color-scheme: light;
 }
 
@@ -43,6 +47,9 @@
   --free-money: #22c55e;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -12px rgb(0 0 0 / 0.6);
   --grid-line: rgb(255 255 255 / 0.04);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
   color-scheme: dark;
 }
 
@@ -64,6 +71,14 @@
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
   --shadow-card: var(--shadow);
+}
+
+/* The stacked lockup is exported on white. Multiply drops that matte on light surfaces. */
+.brand-lockup {
+  mix-blend-mode: multiply;
+}
+:root[data-theme="dark"] .brand-lockup {
+  mix-blend-mode: normal;
 }
 
 body {
