@@ -27,6 +27,7 @@ import {
 } from "@/components/routine/checklists";
 import { useSelectedAccount } from "@/contexts/SelectedAccountContext";
 import { TRADERS_CORNER } from "@/lib/sections";
+import { useHydrated } from "@/lib/useHydrated";
 import type { RoutineSymbol } from "@/lib/marketRoutineSymbols";
 import { BLUEPRINT_INTERVAL_DAYS, ROUTINE_STEPS, localDateStr, type RoutineStepKey } from "@/lib/routineSteps";
 
@@ -62,6 +63,7 @@ const ECONOMY_HREF = "/traders-corner/economy";
 
 export default function TradersCornerHubPage() {
   const { data } = useLive();
+  const hydrated = useHydrated();
   const { selectedAccountId, setSelectedAccountId } = useSelectedAccount();
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [date] = useState(localDateStr);
@@ -158,8 +160,7 @@ export default function TradersCornerHubPage() {
           </p>
           <h1 className="text-3xl font-semibold tracking-tight mt-1">Today&apos;s Routine</h1>
           <p className="text-muted text-sm mt-1">
-            {new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-            {" · "}Top-down: read the market, tend your book, then hunt.
+            {hydrated && `${new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · `}Top-down: read the market, tend your book, then hunt.
           </p>
         </div>
         <div className="flex items-center gap-3">

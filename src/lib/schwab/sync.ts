@@ -10,7 +10,12 @@ type Tx = Prisma.TransactionClient;
 const DAY = 24 * 3600_000;
 const FIRST_SYNC_LOOKBACK_DAYS = 365;
 const INCREMENTAL_OVERLAP_DAYS = 3;
-const TX_TYPES = ["TRADE", "RECEIVE_AND_DELIVER"];
+const TX_TYPES = ["TRADE", "RECEIVE_AND_DELIVER", "DIVIDEND_OR_INTEREST", ...CASH_MOVE_TYPES()];
+
+/** Money moving in or out of the account (booked as signed CASH_DEPOSIT). */
+function CASH_MOVE_TYPES() {
+  return ["ACH_RECEIPT", "ACH_DISBURSEMENT", "CASH_RECEIPT", "CASH_DISBURSEMENT", "ELECTRONIC_FUND", "WIRE_IN", "WIRE_OUT"];
+}
 
 export interface SyncResult {
   accountId: string;
@@ -129,6 +134,31 @@ async function importTransaction(
 
   const occurredAt = new Date(t.time ?? t.tradeDate ?? Date.now());
   const items = t.transferItems ?? [];
+
+  // Dividends, interest, deposits and withdrawals: one signed cash entry.
+  if (t.type === "DIVIDEND_OR_INTEREST" || CASH_MOVE_TYPES().includes(t.type)) {
+    const amount = t.netAmount ?? 0;
+    if (amount === 0) return false;
+    const symbol = items.find((i) => i.instrument?.symbol)?.instrument?.symbol?.trim().toUpperCase();
+    const desc = t.description ?? t.type;
+    const type =
+      t.type !== "DIVIDEND_OR_INTEREST"
+        ? LedgerType.CASH_DEPOSIT
+        : /interest/i.test(desc) && !/dividend/i.test(desc)
+          ? LedgerType.INTEREST
+          : LedgerType.DIVIDEND;
+    await tx.ledgerEntry.create({
+      data: {
+        accountId,
+        type,
+        amount: new Prisma.Decimal(amount.toFixed(4)),
+        occurredAt,
+        externalRef: `${refBase}:cash`,
+        description: symbol && !desc.toUpperCase().includes(symbol) ? `${desc} · ${symbol}` : desc,
+      },
+    });
+    return true;
+  }
   const optionItems = items.filter(isOption);
   const equityItems = items.filter(isEquity);
   const feeTotal = items.filter(isFee).reduce((s, i) => s + Math.abs(i.cost ?? 0), 0);
@@ -294,6 +324,39 @@ async function importTransaction(
     return false;
   }
   return true;
+}
+
+// ─── Buying power effect ─────────────────────────────────────
+
+/**
+ * Store Schwab's per-position margin requirement as each open trade's buying
+ * power effect (split across trades on the same contract by quantity), and as
+ * the margin held for each stock position. Manually entered BPE is kept.
+ */
+async function recordBuyingPowerEffect(tx: Tx, accountId: string, positions: SchwabPosition[]) {
+  for (const p of positions) {
+    const req = p.maintenanceRequirement;
+    if (req == null || !Number.isFinite(req)) continue;
+    if (p.instrument.assetType === "OPTION") {
+      const open = await tx.strategyInstance.findMany({
+        where: { accountId, instrumentType: "OPTION", status: "OPEN", brokerSymbol: p.instrument.symbol, NOT: { bpeSource: "MANUAL" } },
+        select: { id: true, quantity: true, closedQuantity: true },
+      });
+      const qty = open.reduce((s, i) => s + i.quantity.minus(i.closedQuantity).toNumber(), 0);
+      for (const i of open) {
+        const share = qty > 0 ? i.quantity.minus(i.closedQuantity).toNumber() / qty : 0;
+        await tx.strategyInstance.update({
+          where: { id: i.id },
+          data: { buyingPowerEffect: new Prisma.Decimal((req * share).toFixed(2)), bpeSource: "SCHWAB" },
+        });
+      }
+    } else if (p.instrument.assetType === "EQUITY" || p.instrument.assetType === "COLLECTIVE_INVESTMENT") {
+      await tx.underlying.updateMany({
+        where: { accountId, symbol: p.instrument.symbol.trim().toUpperCase() },
+        data: { marginRequirement: new Prisma.Decimal(req.toFixed(2)) },
+      });
+    }
+  }
 }
 
 // ─── Positions reconcile ─────────────────────────────────────
@@ -486,6 +549,7 @@ async function runSync(accountId: string, opts: { full?: boolean }): Promise<Syn
       async (tx) => {
         await reconcileEquities(tx, accountId, positions, result);
         await reconcileOptions(tx, accountId, positions, result);
+        await recordBuyingPowerEffect(tx, accountId, positions);
       },
       { timeout: 60_000 }
     );

@@ -20,7 +20,8 @@ import { useSelectedAccount } from "@/contexts/SelectedAccountContext";
 import { useSidebar } from "@/contexts/SidebarContext";
 import { BrandMark, StackedLogo } from "@/components/BrandMark";
 import { APP_NAME } from "@/lib/brand";
-import { SECTIONS, activeSection, toolHref, type Section, type SectionTool } from "@/lib/sections";
+import { SECTIONS, activeSection, toolHref, visibleGroups, type Section, type SectionTool } from "@/lib/sections";
+import { hasBusinessProfile, useProfileType } from "@/components/sections/useProfileType";
 
 interface Account {
   id: string;
@@ -46,6 +47,7 @@ export default function Sidebar() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const { selectedAccountId, setSelectedAccountId } = useSelectedAccount();
   const { collapsed, toggleCollapsed } = useSidebar();
+  const hasBusiness = hasBusinessProfile(useProfileType());
 
   const accountIdFromPath = pathname.match(/^\/accounts\/([^/]+)/)?.[1] ?? null;
 
@@ -195,9 +197,9 @@ export default function Sidebar() {
                       {currentAccount && <SidebarAccountPulse mode={currentAccount.mode} />}
                     </div>
                   )}
-                  {section.groups.map((group) => (
+                  {visibleGroups(section, hasBusiness).map((group, _i, groups) => (
                     <div key={group.label}>
-                      {section.groups.length > 1 && (
+                      {groups.length > 1 && (
                         <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-muted uppercase tracking-wider">
                           {group.label}
                         </p>

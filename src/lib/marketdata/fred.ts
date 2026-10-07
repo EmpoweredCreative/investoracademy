@@ -48,6 +48,7 @@ export const YAHOO_YIELDS: Record<string, string> = { y3m: "^IRX", y5: "^FVX", y
 
 /** Releases tracked on the calendar, with their usual release time (ET). */
 export const TRACKED_RELEASES: Record<number, { label: string; time: string }> = {
+  9: { label: "Retail Sales", time: "8:30 AM" },
   10: { label: "CPI", time: "8:30 AM" },
   46: { label: "PPI", time: "8:30 AM" },
   50: { label: "Jobs Report", time: "8:30 AM" },
@@ -82,6 +83,13 @@ export interface CalendarEvent {
   label: string;
   time: string;
   kind: "release" | "fomc";
+  /** FRED release id (FRED-sourced events only). */
+  releaseId?: number;
+  /** Market-moving (Forex Factory "High" impact, or a tracked headline release). */
+  high?: boolean;
+  previous?: string | null;
+  forecast?: string | null;
+  actual?: string | null;
 }
 
 export class FredNotConfiguredError extends Error {
@@ -95,7 +103,7 @@ export const fredConfigured = () => Boolean(process.env.FRED_API_KEY);
 const seriesCache = new Map<string, { at: number; points: Point[] }>();
 let calendarCache: { at: number; events: CalendarEvent[] } | null = null;
 
-async function fred<T>(path: string, params: Record<string, string>): Promise<T> {
+export async function fred<T>(path: string, params: Record<string, string>): Promise<T> {
   const key = process.env.FRED_API_KEY;
   if (!key) throw new FredNotConfiguredError();
   const qs = new URLSearchParams({ ...params, api_key: key, file_type: "json" });
@@ -107,9 +115,9 @@ async function fred<T>(path: string, params: Record<string, string>): Promise<T>
 const isoDaysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 
 /** Raw observations for a series over the last ~3 years (missing values dropped). */
-async function observations(series: string): Promise<Point[]> {
+export async function observations(series: string, freshAfter = 0): Promise<Point[]> {
   const hit = seriesCache.get(series);
-  if (hit && Date.now() - hit.at < SERIES_TTL_MS) return hit.points;
+  if (hit && Date.now() - hit.at < SERIES_TTL_MS && hit.at > freshAfter) return hit.points;
   try {
     const json = await fred<{ observations: { date: string; value: string }[] }>("series/observations", {
       series_id: series,
@@ -188,16 +196,15 @@ export async function getYieldCurve() {
   return [curve(latest), curve(shift(30)), curve(shift(365))];
 }
 
-/** Tracked economic releases and FOMC decisions from today through `days` ahead. */
-export async function getCalendar(days = 30): Promise<CalendarEvent[]> {
+/** Tracked FRED releases and FOMC decisions between two dates (YYYY-MM-DD, inclusive). */
+export async function getCalendar(from: string, to: string): Promise<CalendarEvent[]> {
   const today = isoDaysAgo(0);
-  const end = new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
   let events = calendarCache && Date.now() - calendarCache.at < CALENDAR_TTL_MS ? calendarCache.events : null;
   if (!events && !fredConfigured()) events = [];
   if (!events) {
     const json = await fred<{ release_dates: { release_id: number; date: string }[] }>("releases/dates", {
-      realtime_start: today,
+      realtime_start: from < today ? from : today,
       realtime_end: new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10),
       include_release_dates_with_no_data: "true",
       sort_order: "asc",
@@ -209,7 +216,7 @@ export async function getCalendar(days = 30): Promise<CalendarEvent[]> {
       const id = `${r.release_id}:${r.date}`;
       if (!meta || seen.has(id)) return [];
       seen.add(id);
-      return [{ date: r.date, label: meta.label, time: meta.time, kind: "release" as const }];
+      return [{ date: r.date, label: meta.label, time: meta.time, kind: "release" as const, releaseId: r.release_id }];
     });
     calendarCache = { at: Date.now(), events };
   }
@@ -221,12 +228,17 @@ export async function getCalendar(days = 30): Promise<CalendarEvent[]> {
     kind: "fomc",
   }));
   return [...events, ...fomc]
-    .filter((e) => e.date >= today && e.date <= end)
-    .sort((a, b) => a.date.localeCompare(b.date) || minutes(a.time) - minutes(b.time));
+    .filter((e) => e.date >= from && e.date <= to)
+    .sort(byDateTime);
 }
+
+export const byDateTime = (a: CalendarEvent, b: CalendarEvent) =>
+  a.date.localeCompare(b.date) || minutes(a.time) - minutes(b.time);
 
 /** "8:30 AM" → minutes after midnight, for ordering same-day events. */
 function minutes(time: string): number {
-  const [, h, m, ap] = time.match(/(\d+):(\d+) (AM|PM)/) ?? [];
+  const match = time.match(/(\d+):(\d+) (AM|PM)/);
+  if (!match) return -1; // "All day" sorts first
+  const [, h, m, ap] = match;
   return ((Number(h) % 12) + (ap === "PM" ? 12 : 0)) * 60 + Number(m);
 }

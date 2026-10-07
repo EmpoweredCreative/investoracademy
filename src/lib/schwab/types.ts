@@ -29,6 +29,8 @@ export interface SchwabPosition {
   marketValue?: number;
   currentDayProfitLoss?: number;
   currentDayProfitLossPercentage?: number;
+  /** Margin the broker holds for this position (buying power effect). */
+  maintenanceRequirement?: number;
   instrument: SchwabInstrument;
 }
 

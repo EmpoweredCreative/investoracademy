@@ -69,7 +69,9 @@ enum LedgerType {
   STOCK_SELL
   FEE
   ADJUSTMENT
-  CASH_DEPOSIT
+  CASH_DEPOSIT // signed: + deposit, − withdrawal
+  DIVIDEND     // signed cash in (rare negative = reversal)
+  INTEREST     // signed: + interest earned, − margin interest charged
 }
 
 enum CallPut {
@@ -251,6 +253,8 @@ model User {
   digestMinute   Int       @default(30)
   notifyChannel  NotificationChannel   @default(IN_APP)
   notifyFreq     NotificationFrequency @default(DAILY_DIGEST)
+  profileType    ProfileType?          // Foundation: how this person earns (asked on first visit)
+  includeTradingInNetWorth Boolean @default(true) // Foundation: count Trader's Corner accounts as assets
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -263,6 +267,14 @@ model User {
   apiCredentials      ApiCredential[]
   researchCriteria    ResearchCriteriaProfile?
   researchStrategies  ResearchStrategy[]
+  incomeSources       IncomeSource[]
+  bills               Bill[]
+  debts               Debt[]
+  assets              Asset[]
+  netWorthSnapshots   NetWorthSnapshot[]
+  businessMonths      BusinessMonth[]
+  businessExpenses    BusinessExpense[]
+  financeChatMessages FinanceChatMessage[]
 }
 
 // OAuth link to a brokerage login. Tokens are AES-256-GCM encrypted (src/lib/crypto.ts).
@@ -344,6 +356,7 @@ model Underlying {
   id            String        @id @default(cuid())
   accountId     String
   symbol        String
+  marginRequirement Decimal?   @db.Decimal(14, 2) // Schwab maintenance requirement for the shares held
   currentPrice  Decimal?      @db.Decimal(12, 4)
   premiumPolicy PremiumPolicy?
   createdAt     DateTime      @default(now())
@@ -381,6 +394,8 @@ model StrategyInstance {
   finalizationReason     FinalizationReason?
   finalizedAt            DateTime?
   realizedOptionProfit   Decimal?            @db.Decimal(14, 4)
+  buyingPowerEffect      Decimal?            @db.Decimal(14, 2) // margin held for the trade (BPE)
+  bpeSource              String?             // SCHWAB | MANUAL | ESTIMATE
   premiumPolicyOverride  PremiumPolicy?
   wheelCategoryOverride  WheelCategory?
   notes                  String?
@@ -989,4 +1004,231 @@ model CompanyScore {
 
   @@unique([accountId, symbol, lensKey])
   @@index([accountId, lensKey])
+}
+
+// ─── Foundation (personal finance) ───────────────────────────
+// Manual entry only. Never store account numbers or SSNs here.
+
+enum ProfileType {
+  EMPLOYEE
+  BUSINESS_OWNER
+  BOTH
+}
+
+enum PayFrequency {
+  WEEKLY
+  BIWEEKLY
+  SEMIMONTHLY
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+enum IncomeType {
+  SALARY
+  HOURLY
+  OWNER_DRAW
+  DISTRIBUTION
+  SIDE_INCOME
+  OTHER
+}
+
+enum IncomeConsistency {
+  STEADY
+  VARIABLE
+}
+
+enum BillCategory {
+  HOUSING
+  UTILITIES
+  INSURANCE
+  TRANSPORTATION
+  SUBSCRIPTIONS
+  GROCERIES
+  CHILDCARE
+  PHONE_INTERNET
+  OTHER
+}
+
+enum DebtType {
+  MORTGAGE
+  HELOC
+  AUTO
+  PERSONAL
+  CREDIT_CARD
+  STUDENT
+  MEDICAL
+  OTHER
+}
+
+enum AssetType {
+  HOME
+  VEHICLE
+  CHECKING
+  SAVINGS
+  INVESTMENT
+  RETIREMENT
+  BUSINESS
+  OTHER
+}
+
+model IncomeSource {
+  id          String            @id @default(cuid())
+  userId      String
+  name        String
+  type        IncomeType
+  amount      Decimal           @db.Decimal(14, 2) // gross per pay period (used for DTI)
+  netAmount   Decimal?          @db.Decimal(14, 2) // take-home per pay period (used for cash flow)
+  frequency   PayFrequency
+  consistency IncomeConsistency @default(STEADY)
+  active      Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Regular living expenses. Loan payments live in Debt so nothing is counted twice.
+model Bill {
+  id        String       @id @default(cuid())
+  userId    String
+  name      String
+  category  BillCategory
+  amount    Decimal      @db.Decimal(14, 2)
+  frequency PayFrequency @default(MONTHLY)
+  dueDay    Int?
+  autopay   Boolean      @default(false)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Debt {
+  id             String    @id @default(cuid())
+  userId         String
+  lender         String
+  type           DebtType
+  balance        Decimal   @db.Decimal(14, 2)
+  balanceAsOf    DateTime  @db.Date
+  monthlyPayment Decimal   @db.Decimal(14, 2)
+  apr            Decimal?  @db.Decimal(6, 3)  // annual %, e.g. 22.990
+  aprIsEstimate  Boolean   @default(false)
+  creditLimit    Decimal?  @db.Decimal(14, 2) // credit cards, for utilization
+  // Mortgage escrow (monthly) for full PITI
+  escrowTaxes    Decimal?  @db.Decimal(14, 2)
+  escrowInsurance Decimal? @db.Decimal(14, 2)
+  pmi            Decimal?  @db.Decimal(14, 2)
+  paidOffAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  securedAssets  Asset[]
+
+  @@index([userId])
+}
+
+model Asset {
+  id              String    @id @default(cuid())
+  userId          String
+  name            String
+  type            AssetType
+  value           Decimal   @db.Decimal(14, 2)
+  valueIsEstimate Boolean   @default(false)
+  asOf            DateTime  @db.Date
+  securesDebtId   String?   // the loan this home/vehicle backs, for equity
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  securesDebt     Debt?     @relation(fields: [securesDebtId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+}
+
+// One per user per month, captured on the first Foundation visit that month.
+model NetWorthSnapshot {
+  id          String   @id @default(cuid())
+  userId      String
+  month       DateTime @db.Date // first day of the month
+  assets      Decimal  @db.Decimal(14, 2)
+  liabilities Decimal  @db.Decimal(14, 2)
+  liquid      Decimal  @db.Decimal(14, 2)
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month])
+}
+
+enum BusinessExpenseCategory {
+  PAYROLL
+  CONTRACTORS
+  SOFTWARE
+  INSURANCE
+  PROFESSIONAL
+  ADVERTISING
+  TRAVEL
+  RENT
+  OTHER
+}
+
+// Business P&L (business-owner profiles): revenue per month.
+model BusinessMonth {
+  id        String   @id @default(cuid())
+  userId    String
+  month     DateTime @db.Date // first day of the month
+  revenue   Decimal  @db.Decimal(14, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month])
+}
+
+model BusinessExpense {
+  id        String                  @id @default(cuid())
+  userId    String
+  month     DateTime                @db.Date // first day of the month
+  name      String
+  category  BusinessExpenseCategory
+  amount    Decimal                 @db.Decimal(14, 2)
+  oneTime   Boolean                 @default(false) // unusual, non-recurring item
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+
+  user      User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, month])
+}
+
+// Foundation advisor (Claude) conversation, one per user. "Start over" archives
+// messages instead of deleting them, so they still count toward the monthly cap.
+model FinanceChatMessage {
+  id               String   @id @default(cuid())
+  userId           String
+  role             String   // user | assistant
+  kind             String   @default("chat") // chat | statement (screenshot read)
+  content          String
+  toolEvents       Json?
+  archived         Boolean  @default(false)
+  // Usage and cost (assistant turns), for the cap and spend reporting
+  usedOwnKey       Boolean  @default(false)
+  model            String?
+  inputTokens      Int      @default(0)
+  outputTokens     Int      @default(0)
+  cacheReadTokens  Int      @default(0)
+  cacheWriteTokens Int      @default(0)
+  costUsd          Decimal? @db.Decimal(10, 5)
+  createdAt        DateTime @default(now())
+
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }

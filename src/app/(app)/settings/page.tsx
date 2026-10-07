@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/Badge";
 import Link from "next/link";
 import { CriteriaEditor } from "@/components/fundamentals/CriteriaEditor";
 import { FinvizConnect } from "@/components/research/FinvizConnect";
+import { ProfileSettings } from "@/components/foundation/ProfileSettings";
+import { AdvisorKeySettings } from "@/components/foundation/AdvisorKeySettings";
 
 export default function SettingsPage() {
   return (
@@ -13,6 +15,10 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-bold">Settings</h1>
         <p className="text-muted text-sm mt-1">Manage your account preferences</p>
       </div>
+
+      <ProfileSettings />
+
+      <AdvisorKeySettings />
 
       <div className="space-y-2">
         <CriteriaEditor />

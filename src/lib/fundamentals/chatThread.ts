@@ -105,7 +105,7 @@ export async function streamChatTurn(opts: {
         emit({ t: "done" });
       } catch (err) {
         console.error("[research chat]", err);
-        emit({ t: "error", message: err instanceof Error ? err.message : "Claude request failed" });
+        emit({ t: "error", message: err instanceof Error ? err.message : "The research assistant couldn't respond. Try again." });
       } finally {
         try {
           controller.close();

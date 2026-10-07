@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { ExternalLink, Info, X } from "lucide-react";
 import { tradingViewSymbol, tradingViewUrl } from "@/lib/tradingview";
 import { TradingViewChart } from "./TradingViewChart";
@@ -44,10 +45,18 @@ export function ChartPanel({
     };
   }, [onClose]);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`${target.label} chart`}>
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-[1400px] max-h-full overflow-y-auto rounded-2xl border border-border bg-card shadow-card p-5 space-y-3">
+  // Portal to <body>: an animated (transformed) ancestor would otherwise trap
+  // this fixed overlay inside the step card and clip it under the top bar.
+  // The overlay itself scrolls, so a tall panel is reachable on short screens.
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/50 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${target.label} chart`}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="relative mx-auto my-6 w-[calc(100%-2rem)] max-w-[1400px] rounded-2xl border border-border bg-card shadow-card p-5 space-y-3">
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold">{target.label}</h2>
@@ -97,7 +106,7 @@ export function ChartPanel({
           </p>
         )}
 
-        <TradingViewChart symbol={tv.symbol} interval={interval} className="h-[min(68vh,720px)]" />
+        <TradingViewChart symbol={tv.symbol} interval={interval} className="h-[max(380px,calc(100vh-300px))]" />
 
         <div className="flex flex-wrap gap-1.5">
           {related.map((r) => (
@@ -116,6 +125,7 @@ export function ChartPanel({
           ))}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

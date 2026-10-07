@@ -366,6 +366,8 @@ export async function calculateCashBalance(accountId: string): Promise<Prisma.De
         break;
       case LedgerType.ADJUSTMENT:
       case LedgerType.CASH_DEPOSIT:
+      case LedgerType.DIVIDEND:
+      case LedgerType.INTEREST:
         balance = balance.plus(entry.amount); // Can be positive or negative
         break;
     }

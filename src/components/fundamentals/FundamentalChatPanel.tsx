@@ -259,7 +259,7 @@ export function FundamentalChatPanel({
           <div>
             <p className="text-sm font-semibold leading-tight">{ANALYST_NAME}</p>
             <p className="text-[11px] text-muted">
-              {desk ? "Live fundamentals, your criteria, your holdings and DCF models" : `Researching ${symbol}`} · powered by Claude
+              {desk ? "Live fundamentals, your criteria, your holdings and DCF models" : `Researching ${symbol}`}
             </p>
           </div>
         </div>

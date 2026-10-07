@@ -27,6 +27,9 @@
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
   color-scheme: light;
 }
 
@@ -50,8 +53,22 @@
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
   color-scheme: dark;
 }
+
+/*
+ * Chart series colors. Charts read these from SVG attributes, which the CSS
+ * build can't see, so it would strip them as unused; these rules keep them.
+ */
+.text-series-1 { color: var(--series-1); }
+.text-series-2 { color: var(--series-2); }
+.text-series-3 { color: var(--series-3); }
+.text-series-4 { color: var(--series-4); }
+.text-series-5 { color: var(--series-5); }
+.text-series-6 { color: var(--series-6); }
 
 @theme inline {
   --color-background: var(--bg);
@@ -149,10 +166,61 @@ body {
 }
 .flow-dash { stroke-dasharray: 4 8; animation: flow-dash 1s linear infinite; }
 
+/* Dashboard motion */
+@keyframes grow-y {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+/* SVG bars grow from their baseline; set --origin to the zero line (px) and --d for stagger. */
+.grow-y {
+  transform-box: view-box;
+  transform-origin: 0 var(--origin, 100%);
+  animation: grow-y 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes grow-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.grow-x { transform-origin: left center; animation: grow-x 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both; animation-delay: var(--d, 0ms); }
+.stagger { animation-delay: calc(var(--i, 0) * 70ms); }
+@keyframes glow-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.55; }
+  50% { transform: translate(6%, -8%) scale(1.12); opacity: 0.8; }
+}
+.glow-drift { animation: glow-drift 12s ease-in-out infinite; }
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger) 45%, transparent); }
+  80%, 100% { box-shadow: 0 0 0 8px transparent; }
+}
+.pulse-ring { animation: pulse-ring 2s ease-out infinite; }
+.lift { transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
+@keyframes flip-in {
+  from { opacity: 0; transform: perspective(900px) rotateX(-18deg) translateY(14px); }
+  to { opacity: 1; transform: perspective(900px) rotateX(0) translateY(0); }
+}
+.flip-in { animation: flip-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both; animation-delay: calc(var(--i, 0) * 90ms); }
+@keyframes pop {
+  0% { opacity: 0; transform: scale(0.6); }
+  70% { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.pop { animation: pop 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; animation-delay: var(--d, 0ms); }
+@keyframes seg-on {
+  from { opacity: 0.15; transform: scaleY(0.4); }
+  to { opacity: 1; transform: scaleY(1); }
+}
+.seg-on { transform-origin: bottom; animation: seg-on 0.4s ease-out both; animation-delay: var(--d, 0ms); }
+.tilt { transform-style: preserve-3d; transition: transform 0.15s ease-out; will-change: transform; }
+.tilt-depth { transform: translateZ(28px); }
+.lift:hover { transform: translateY(-2px); box-shadow: 0 10px 30px -14px rgb(20 20 30 / 0.25); }
+
 @media (prefers-reduced-motion: reduce) {
-  .flash-up, .flash-down, .ticker-track, .live-ping, .slide-in, .rise-in, .sweep, .flow-dash {
+  .flash-up, .flash-down, .ticker-track, .live-ping, .slide-in, .rise-in, .sweep, .flow-dash,
+  .grow-y, .grow-x, .glow-drift, .pulse-ring, .flip-in, .pop, .seg-on {
     animation: none !important;
   }
+  .lift:hover { transform: none; }
 }
 
 /* Theme toggle icon swap */
@@ -172,4 +240,28 @@ body {
 }
 .no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+/* Print (Foundation statements): just the page content, on white. */
+@media print {
+  aside,
+  main > .sticky,
+  .no-print,
+  nextjs-portal {
+    display: none !important;
+  }
+  main {
+    margin-left: 0 !important;
+  }
+  body {
+    background: #fff !important;
+  }
+  .shadow-card {
+    box-shadow: none !important;
+  }
+  .rise-in {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
 }

@@ -1,10 +1,13 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Bell, Moon, RefreshCw, Sun } from "lucide-react";
+import { Bell, CalendarClock, Landmark, Moon, RefreshCw, Sun } from "lucide-react";
 import { formatCountdown, getMarketStatus } from "@/lib/marketClock";
+import { countdownLabel } from "@/lib/marketdata/etTime";
+import { useHydrated } from "@/lib/useHydrated";
 import { useLive, useNow } from "./LiveProvider";
-import { DeltaChip, Flash, LiveDot, TickerTape, fmtPrice, fmtSigned } from "./primitives";
+import { DeltaChip, Flash, LiveDot, TickerTape, fmtPrice } from "./primitives";
 
 const KIND_STYLE: Record<string, string> = {
   CREDIT: "bg-success/12 text-success",
@@ -13,6 +16,8 @@ const KIND_STYLE: Record<string, string> = {
   BUY: "bg-accent/12 text-accent",
   FEE: "bg-muted/15 text-muted",
   CASH: "bg-core/12 text-core",
+  DIVIDEND: "bg-success/12 text-success",
+  INTEREST: "bg-success/12 text-success",
   ALERT: "bg-warning/15 text-warning",
   ADJUST: "bg-muted/15 text-muted",
 };
@@ -47,6 +52,7 @@ export function ThemeToggle() {
 export function StatusBar() {
   const { data, status, lastUpdated, refresh } = useLive();
   const now = useNow(1000);
+  const hydrated = useHydrated();
   const market = getMarketStatus(new Date(now));
   const ago = lastUpdated ? Math.max(0, Math.round((now - lastUpdated) / 1000)) : null;
 
@@ -61,16 +67,16 @@ export function StatusBar() {
       <div className="flex items-center gap-2 font-medium">
         <LiveDot tone={marketTone} pulse={market.phase === "OPEN"} />
         <span>{market.label}</span>
-        <span className="text-muted num">
-          {market.nextLabel} in {formatCountdown(market.msToNext)}
-        </span>
+        <span className="text-muted num">{hydrated ? `${market.nextLabel} in ${formatCountdown(market.msToNext)}` : "\u00a0"}</span>
       </div>
 
       <div className="hidden md:flex items-center gap-2 text-muted">
         <span className="h-3 w-px bg-border" />
-        <span className="num text-foreground font-semibold tracking-tight">{market.nyTime}</span>
+        <span className="num text-foreground font-semibold tracking-tight">{hydrated ? market.nyTime : "--:--:--"}</span>
         <span>ET</span>
       </div>
+
+      <EventPill now={now} />
 
       <div className="ml-auto flex items-center gap-3">
         {data?.sync && (
@@ -119,17 +125,18 @@ export function StatusBar() {
 }
 
 /** Scrolling Live Wire: market quotes, your holdings, and recent account activity. */
+/**
+ * Scrolling watchlist, broad market to sectors, then the person's own
+ * positions. Last price, net change and % change, like a broker watchlist.
+ */
 export function LiveWire() {
   const { data } = useLive();
   if (!data) {
     return <div className="h-9 border-b border-border bg-card animate-pulse" />;
   }
 
-  const holdings = data.account?.holdings.map((h) => h.symbol.toUpperCase()) ?? [];
-  const quoteItems = [
-    ...data.marketSymbols.map((m) => ({ key: m.symbol, label: m.label })),
-    ...holdings.filter((s) => !data.marketSymbols.some((m) => m.symbol === s)).map((s) => ({ key: s, label: s })),
-  ];
+  const groups = data.wire ?? [{ key: "market", label: "Market", items: data.marketSymbols }];
+  const count = groups.reduce((n, g) => n + g.items.length, 0);
 
   return (
     <div className="flex items-stretch h-9 border-b border-border bg-card text-xs">
@@ -138,29 +145,33 @@ export function LiveWire() {
         Live wire
       </div>
       <div className="flex-1 min-w-0">
-        <TickerTape duration={Math.max(40, quoteItems.length * 6 + data.activity.length * 4)}>
-          {quoteItems.map(({ key, label }) => {
-            const q = data.quotes[key.toUpperCase()];
-            if (!q || q.price == null) return null;
-            return (
-              <span key={key} className="flex items-center gap-2 px-4 h-9 border-r border-border/60">
-                <span className="font-semibold">{label}</span>
-                <Flash value={q.price}>
-                  <span className="num">{fmtPrice(q.price)}</span>
-                </Flash>
-                {q.changePct != null && <DeltaChip pct={q.changePct} size="xs" />}
+        <TickerTape duration={Math.max(45, count * 4)}>
+          {groups.map((g) => (
+            <span key={g.key} className="flex items-center h-9">
+              <span className="mx-2 rounded bg-foreground/90 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.14em] text-background">
+                {g.label}
               </span>
-            );
-          })}
-          {data.activity.slice(0, 8).map((a) => (
-            <span key={a.id} className="flex items-center gap-2 px-4 h-9 border-r border-border/60">
-              <span className={`rounded px-1.5 py-px text-[10px] font-semibold tracking-wide ${KIND_STYLE[a.kind] ?? KIND_STYLE.ADJUST}`}>
-                {a.kind}
-              </span>
-              <span className="max-w-[28ch] truncate">{a.title}</span>
-              {a.amount != null && (
-                <span className={`num ${a.amount >= 0 ? "text-success" : "text-danger"}`}>{fmtSigned(a.amount)}</span>
-              )}
+              {g.items.map(({ symbol, label }) => {
+                const q = data.quotes[symbol.toUpperCase()];
+                if (!q || q.price == null) return null;
+                const up = (q.change ?? 0) >= 0;
+                const isYield = symbol === "^TNX";
+                return (
+                  <span key={symbol} className="flex items-center gap-2 px-3.5 h-9 border-r border-border/60" title={q.name ?? label}>
+                    <span className="font-semibold">{label}</span>
+                    <Flash value={q.price}>
+                      <span className="num">{isYield ? `${q.price.toFixed(3)}%` : fmtPrice(q.price)}</span>
+                    </Flash>
+                    {q.change != null && (
+                      <span className={`num ${up ? "text-success" : "text-danger"}`}>
+                        {up ? "+" : "−"}
+                        {Math.abs(q.change).toFixed(Math.abs(q.change) < 1 ? 3 : 2)}
+                      </span>
+                    )}
+                    {q.changePct != null && <DeltaChip pct={q.changePct} size="xs" />}
+                  </span>
+                );
+              })}
             </span>
           ))}
         </TickerTape>
@@ -170,3 +181,119 @@ export function LiveWire() {
 }
 
 export { KIND_STYLE };
+
+interface HeadlineEvent {
+  label: string;
+  date: string;
+  time: string;
+  kind: "release" | "fomc";
+  at: string;
+  forecast?: string | null;
+  previous?: string | null;
+  actual?: string | null;
+}
+
+/** Parse "0.3%", "200K" for comparing actual with expected. */
+function num(v: string | null | undefined) {
+  const m = v?.replace(/,/g, "").match(/-?\d+(\.\d+)?/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return /K$/i.test(v!) ? n * 1e3 : /M$/i.test(v!) ? n * 1e6 : n;
+}
+
+/**
+ * Market-moving releases in the top bar, Forex Factory style: a countdown to
+ * each one, then the actual vs expected once it's out. Rotates through today's
+ * and upcoming events (pauses on hover) and warms up as a release gets close.
+ */
+function EventPill({ now }: { now: number }) {
+  const [events, setEvents] = useState<HeadlineEvent[]>([]);
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  useEffect(() => {
+    const load = () =>
+      fetch("/api/market/next-event")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => j && setEvents(j.events ?? []))
+        .catch(() => {});
+    load();
+    const t = setInterval(load, 3 * 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Lead with what matters most: a result from the last 30 minutes, else the next one up.
+  const featured = (() => {
+    const fresh = events.findIndex((e) => now - Date.parse(e.at) >= 0 && now - Date.parse(e.at) <= 30 * 60_000);
+    if (fresh >= 0) return fresh;
+    const next = events.findIndex((e) => Date.parse(e.at) > now);
+    return next >= 0 ? next : 0;
+  })();
+
+  useEffect(() => {
+    if (paused || events.length < 2) return;
+    const t = setInterval(() => setIndex((i) => i + 1), 6000);
+    return () => clearInterval(t);
+  }, [paused, events.length]);
+
+  if (events.length === 0) return null;
+  const i = (featured + index) % events.length;
+  const event = events[i];
+  const ms = Date.parse(event.at) - now;
+  const released = ms <= 0;
+  const justOut = released && -ms <= 5 * 60_000;
+  const imminent = !released && ms <= 30 * 60_000;
+  const soon = !released && ms <= 6 * 3_600_000;
+  const Icon = event.kind === "fomc" ? Landmark : CalendarClock;
+  const a = num(event.actual);
+  const f = num(event.forecast);
+  const vs = a != null && f != null ? Math.sign(a - f) : null;
+  const tone = released
+    ? "border-success/40 bg-success/10 text-foreground"
+    : imminent
+      ? "border-warning bg-warning text-white pulse-ring"
+      : soon
+        ? "border-warning/50 bg-warning/15 text-foreground"
+        : "border-accent/40 bg-accent/10 text-foreground";
+
+  return (
+    <Link
+      href="/traders-corner/economy"
+      onPointerEnter={() => setPaused(true)}
+      onPointerLeave={() => setPaused(false)}
+      className={`hidden md:flex min-w-0 items-center gap-2 overflow-hidden rounded-full border px-2.5 py-1 font-medium transition-colors ${tone}`}
+      title={`${event.label} · ${event.date} ${event.time} ET${event.previous ? ` · prev ${event.previous}` : ""}`}
+    >
+      <span key={`${i}:${released}`} className="slide-in flex min-w-0 items-center gap-1.5">
+        <Icon className="w-3.5 h-3.5 shrink-0" />
+        {justOut && <span className="rounded bg-success px-1 text-[9px] font-bold uppercase tracking-wider text-white">Just out</span>}
+        <span className="truncate max-w-[14rem]">{event.label}</span>
+        <span className="num whitespace-nowrap">
+          {released ? (
+            event.actual ? (
+              <>
+                <span className="opacity-70">Actual</span> <span className="font-semibold">{event.actual}</span>
+                {vs != null && vs !== 0 && <span className={vs > 0 ? "text-success" : "text-danger"}> {vs > 0 ? "▲" : "▼"}</span>}
+                {event.forecast && <span className="opacity-70"> · exp {event.forecast}</span>}
+              </>
+            ) : (
+              <span className="opacity-75">· released{event.forecast ? ` · exp ${event.forecast}` : ""}</span>
+            )
+          ) : (
+            <span className={imminent ? "" : "opacity-80"}>
+              · {countdownLabel(ms)}
+              {event.forecast ? ` · exp ${event.forecast}` : ""}
+            </span>
+          )}
+        </span>
+      </span>
+      {events.length > 1 && (
+        <span className="flex shrink-0 gap-0.5" aria-hidden>
+          {events.map((_, n) => (
+            <span key={n} className={`h-1 w-1 rounded-full ${n === i ? "bg-current" : "bg-current opacity-30"}`} />
+          ))}
+        </span>
+      )}
+    </Link>
+  );
+}

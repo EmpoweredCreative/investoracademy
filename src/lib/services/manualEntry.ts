@@ -45,6 +45,7 @@ interface OptionEntryInput {
   price: number;
   entryDelta?: number;
   fees: number;
+  buyingPowerEffect?: number;
   occurredAt: Date;
   strategyType?: string;
   premiumPolicyOverride?: "CASHFLOW" | "BASIS_REDUCTION" | "REINVEST_ON_CLOSE";
@@ -280,6 +281,10 @@ export async function processOptionEntry(input: OptionEntryInput) {
           premiumPolicyOverride: input.premiumPolicyOverride || null,
           wheelCategoryOverride: input.wheelCategoryOverride || null,
           notes: input.notes,
+          // The whole strategy's buying power effect lives on its first leg.
+          ...(input.buyingPowerEffect != null
+            ? { buyingPowerEffect: new Prisma.Decimal(input.buyingPowerEffect), bpeSource: "MANUAL" }
+            : {}),
         },
       });
       instanceId = instance.id;

@@ -15,15 +15,17 @@ function useWidth<T extends HTMLElement>() {
   return [ref, width] as const;
 }
 
-/** Three "nice" ticks spanning [min, max]. */
+/** Evenly spaced "nice" ticks (about four intervals) whose range covers [min, max]. */
 function ticks(min: number, max: number): number[] {
   const span = max - min || 1;
-  const step = Math.pow(10, Math.floor(Math.log10(span / 2)));
-  const nice = [1, 2, 2.5, 5, 10].map((m) => m * step).find((s) => span / s <= 4) ?? step * 10;
-  const lo = Math.floor(min / nice) * nice;
+  const raw = span / 4;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
+  const lo = Math.floor(min / step) * step;
+  const hi = Math.ceil(max / step) * step;
   const out: number[] = [];
-  for (let v = lo; v <= max + nice * 0.001; v += nice) if (v >= min - nice * 0.001) out.push(Number(v.toFixed(6)));
-  return out.length >= 2 ? out : [min, max];
+  for (let v = lo; v <= hi + step / 1000; v += step) out.push(Number(v.toFixed(6)));
+  return out;
 }
 
 const PAD = { top: 10, right: 12, bottom: 22, left: 40 };
@@ -180,7 +182,7 @@ export function YieldCurveChart({ curves, names, height = 240 }: { curves: Curve
             <g key={t}>
               <line x1={PAD.left} x2={PAD.left + iw} y1={y(t)} y2={y(t)} stroke="var(--grid-line)" />
               <text x={PAD.left - 6} y={y(t)} dy="0.32em" textAnchor="end" className="fill-muted text-[10px] num">
-                {t.toFixed(1)}%
+                {t.toFixed(Number.isInteger(Math.round(t * 1000) / 100) ? 1 : 2)}%
               </text>
             </g>
           ))}
@@ -252,6 +254,121 @@ export function CurveLegend({ names }: { names: string[] }) {
             <line x1="1" x2="21" y1="4" y2="4" stroke={CURVE_STYLES[i].color} strokeWidth="2" strokeDasharray={CURVE_STYLES[i].dash} />
           </svg>
           {n}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ─── Comparison lines (shared x axis) ────────────────────────
+
+export interface CompareSeries {
+  label: string;
+  values: number[];
+  color: string;
+  dash?: string;
+}
+
+/**
+ * Several series over the same evenly spaced x axis (e.g. months from today).
+ * `xLabel(i)` names point i for the axis ends and the hover readout.
+ */
+export function CompareChart({
+  series,
+  xLabel,
+  format,
+  height = 220,
+  label,
+}: {
+  series: CompareSeries[];
+  xLabel: (i: number) => string;
+  format: (v: number) => string;
+  height?: number;
+  label: string;
+}) {
+  const [ref, width] = useWidth<HTMLDivElement>();
+  const [hover, setHover] = useState<number | null>(null);
+  const n = Math.max(...series.map((s) => s.values.length));
+  if (n < 2) return <div className="grid place-items-center text-xs text-muted" style={{ height }}>Not enough data</div>;
+
+  const all = series.flatMap((s) => s.values);
+  const yTicks = ticks(Math.min(0, ...all), Math.max(...all));
+  const y0 = yTicks[0];
+  const y1 = yTicks[yTicks.length - 1];
+  const iw = Math.max(0, width - PAD.left - PAD.right - 24);
+  const ih = height - PAD.top - PAD.bottom;
+  const x = (i: number) => PAD.left + 24 + (i / (n - 1)) * iw;
+  const y = (v: number) => PAD.top + ih - ((v - y0) / (y1 - y0 || 1)) * ih;
+
+  const onMove = (e: React.PointerEvent<SVGRectElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setHover(Math.round(Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) * (n - 1)));
+  };
+
+  return (
+    <div ref={ref} className="relative" style={{ height }}>
+      {width > 0 && (
+        <svg width={width} height={height} role="img" aria-label={label}>
+          {yTicks.map((t) => (
+            <g key={t}>
+              <line x1={PAD.left + 24} x2={width - PAD.right} y1={y(t)} y2={y(t)} stroke="var(--grid-line)" />
+              <text x={PAD.left + 18} y={y(t)} dy="0.32em" textAnchor="end" className="fill-muted text-[10px] num">
+                {format(t)}
+              </text>
+            </g>
+          ))}
+          <text x={PAD.left + 24} y={height - 6} className="fill-muted text-[10px]">{xLabel(0)}</text>
+          <text x={width - PAD.right} y={height - 6} textAnchor="end" className="fill-muted text-[10px]">{xLabel(n - 1)}</text>
+          {series.map((s) => (
+            <path
+              key={s.label}
+              d={s.values.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ")}
+              fill="none"
+              stroke={s.color}
+              strokeWidth="2"
+              strokeDasharray={s.dash}
+              strokeLinejoin="round"
+            />
+          ))}
+          {hover != null && (
+            <>
+              <line x1={x(hover)} x2={x(hover)} y1={PAD.top} y2={PAD.top + ih} stroke="var(--muted)" strokeOpacity="0.5" />
+              {series.map((s) =>
+                hover < s.values.length ? (
+                  <circle key={s.label} cx={x(hover)} cy={y(s.values[hover])} r="4" fill={s.color} stroke="var(--card)" strokeWidth="2" />
+                ) : null
+              )}
+            </>
+          )}
+          <rect x={PAD.left + 24} y={PAD.top} width={iw} height={ih} fill="transparent" onPointerMove={onMove} onPointerLeave={() => setHover(null)} />
+        </svg>
+      )}
+      {hover != null && (
+        <Tooltip x={x(hover)} width={width}>
+          <div className="font-semibold mb-0.5">{xLabel(hover)}</div>
+          {series.map((s) => (
+            <div key={s.label} className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full" style={{ background: s.color }} />
+              <span className="text-muted">{s.label}</span>
+              <span className="num ml-auto pl-3">{format(s.values[Math.min(hover, s.values.length - 1)])}</span>
+            </div>
+          ))}
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+/** Legend for CompareChart. */
+export function CompareLegend({ series }: { series: Pick<CompareSeries, "label" | "color" | "dash">[] }) {
+  return (
+    <div className="flex flex-wrap gap-4 text-xs text-muted">
+      {series.map((s) => (
+        <span key={s.label} className="inline-flex items-center gap-1.5">
+          <svg width="22" height="8" aria-hidden>
+            <line x1="1" x2="21" y1="4" y2="4" stroke={s.color} strokeWidth="2" strokeDasharray={s.dash} />
+          </svg>
+          {s.label}
         </span>
       ))}
     </div>

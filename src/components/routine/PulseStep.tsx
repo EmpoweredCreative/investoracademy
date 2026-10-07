@@ -2,18 +2,24 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, CalendarClock, ExternalLink, Landmark } from "lucide-react";
+import { ArrowRight, ExternalLink, Landmark } from "lucide-react";
 import type { CalendarEvent, Reading } from "@/lib/marketdata/fred";
 import { StepLabel } from "./StepCard";
 import { FAVORITE_SITES } from "./checklists";
+import { CalendarSourceNote, ReleaseCalendar } from "./ReleaseCalendar";
 import { localDateStr } from "@/lib/routineSteps";
+import { CurveLegend, YieldCurveChart, type Curve } from "@/components/charts/EconCharts";
 
 export interface MacroPayload {
   configured: boolean;
   readings: Record<string, Reading>;
   liveYields: Record<string, { value: number; change: number | null } | null>;
   calendar: CalendarEvent[];
+  /** FRED curves: latest close, 1 month ago, 1 year ago. */
+  curve: Curve[];
 }
+
+const CURVE_NAMES = ["Latest close", "1 month ago", "1 year ago"];
 
 const HEADLINE = ["cpi", "coreCpi", "ppi", "corePce", "unemployment"] as const;
 const YIELD_KEYS = [
@@ -104,7 +110,8 @@ export function PulseStep({ economyHref }: { economyHref: string }) {
           )}
 
           <div>
-            <StepLabel>Treasury yields</StepLabel>
+            <StepLabel>Treasury yield curve</StepLabel>
+            <YieldCurve data={data} yields={yields} />
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-px rounded-xl overflow-hidden border border-border bg-border">
               {yields.map((y) => (
                 <div key={y.key} className="bg-card px-3 py-2.5" title={y.live ? "Live" : "FRED daily close"}>
@@ -124,48 +131,29 @@ export function PulseStep({ economyHref }: { economyHref: string }) {
           </div>
         </div>
 
-        <div className="space-y-5">
-          <div>
-            <StepLabel>Up next · 7 days</StepLabel>
-            {data.calendar.length === 0 ? (
-              <p className="text-sm text-muted">No major releases scheduled this week.</p>
-            ) : (
-              <ul className="rounded-xl border border-border divide-y divide-border">
-                {data.calendar.slice(0, 6).map((e) => (
-                  <li key={`${e.date}-${e.label}`} className="flex items-center gap-3 px-3 py-2 text-sm">
-                    {e.kind === "fomc" ? (
-                      <Landmark className="w-4 h-4 text-accent shrink-0" />
-                    ) : (
-                      <CalendarClock className="w-4 h-4 text-muted shrink-0" />
-                    )}
-                    <span className={`flex-1 ${e.kind === "fomc" ? "font-semibold" : ""}`}>{e.label}</span>
-                    <span className="text-xs text-muted num whitespace-nowrap">
-                      {dayLabel(e.date)} · {e.time} ET
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div>
-            <StepLabel>Your sites</StepLabel>
-            <div className="flex flex-wrap gap-2">
-              {FAVORITE_SITES.map((s) => (
-                <a
-                  key={s.href}
-                  href={s.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-foreground hover:bg-card-hover"
-                >
-                  {s.label}
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              ))}
-            </div>
+        <div>
+          <StepLabel>Release calendar · this week &amp; next 7 days</StepLabel>
+          <ReleaseCalendar events={data.calendar} emptyText="No major releases this week." />
+          <div className="mt-2">
+            <CalendarSourceNote />
           </div>
         </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted mr-1">Your sites</span>
+        {FAVORITE_SITES.map((s) => (
+          <a
+            key={s.href}
+            href={s.href}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:text-foreground hover:bg-card-hover"
+          >
+            {s.label}
+            <ExternalLink className="w-3 h-3" />
+          </a>
+        ))}
       </div>
 
       <Link href={economyHref} className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline">
@@ -226,9 +214,19 @@ function Bps({ change }: { change: number | null }) {
 const parse = (d: string) => new Date(d + "T12:00:00");
 export const monthLabel = (d: string) => parse(d).toLocaleDateString("en-US", { month: "short", year: "numeric" });
 export const shortDate = (d: string) => parse(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-export function dayLabel(d: string) {
-  const diff = Math.round((parse(d).getTime() - parse(localDateStr()).getTime()) / 86_400_000);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Tomorrow";
-  return parse(d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+
+/** Curve chart for Step 2: FRED's dated curves, or today's live yields if FRED isn't set up. */
+function YieldCurve({ data, yields }: { data: MacroPayload; yields: ReturnType<typeof currentYields> }) {
+  const fromFred = data.curve?.length ? data.curve : null;
+  const curves: Curve[] = fromFred ?? [
+    { date: localDateStr(), points: yields.map((y) => ({ tenor: y.label, value: y.value })) },
+  ];
+  const names = fromFred ? CURVE_NAMES.slice(0, curves.length) : ["Now"];
+  if (!curves[0].points.some((p) => p.value != null)) return null;
+  return (
+    <div className="mb-3 rounded-xl border border-border px-3 pt-3 pb-1 space-y-2">
+      <CurveLegend names={names} />
+      <YieldCurveChart curves={curves} names={names} height={200} />
+    </div>
+  );
 }

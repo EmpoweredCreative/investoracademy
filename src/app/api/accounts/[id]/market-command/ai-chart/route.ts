@@ -138,7 +138,7 @@ export async function POST(
       });
 
       if (response.stop_reason === "refusal" || !response.parsed_output) {
-        return NextResponse.json({ error: "Claude could not analyze that image. Try a clearer chart screenshot." }, { status: 502 });
+        return NextResponse.json({ error: "We couldn't analyze that image. Try a clearer chart screenshot." }, { status: 502 });
       }
       const validated = response.parsed_output;
       const parsed = validated;

@@ -2,10 +2,11 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireAuth, handleApiError } from "@/lib/api-helpers";
-import { BUCKETS, DEFAULT_BUCKET, type Bucket } from "@/lib/buckets";
 import { getMarketStatus } from "@/lib/marketClock";
 import { getIntradaySeries, getLiveQuotes, MARKET_SYMBOLS } from "@/lib/marketdata/liveQuotes";
 import { syncSchwabAccount } from "@/lib/schwab/sync";
+import { WIRE_GROUPS, type WireGroup } from "@/lib/marketRoutineSymbols";
+import { ACCOUNT_SNAPSHOT_INCLUDE, buildAccountSnapshot, holdingSymbols } from "@/lib/services/accountSnapshot";
 
 /** Linked accounts re-sync in the background when their data is older than this. */
 const SYNC_STALE_OPEN_MS = 5 * 60_000;
@@ -25,6 +26,8 @@ const ACTIVITY_KIND: Record<string, string> = {
   FEE: "FEE",
   ADJUSTMENT: "ADJUST",
   CASH_DEPOSIT: "CASH",
+  DIVIDEND: "DIVIDEND",
+  INTEREST: "INTEREST",
 };
 
 /**
@@ -41,107 +44,40 @@ export async function GET(req: NextRequest) {
     const account = accountId
       ? await prisma.account.findFirst({
           where: { id: accountId, userId },
-          include: {
-            wheelTargets: true,
-            underlyings: {
-              include: {
-                wheelClassification: true,
-                stockLots: { where: { remaining: { gt: 0 } } },
-                strategyInstances: { where: { status: "OPEN", instrumentType: "OPTION" }, select: { id: true } },
-              },
-            },
-          },
+          include: ACCOUNT_SNAPSHOT_INCLUDE,
         })
       : null;
 
-    const holdingSymbols = (account?.underlyings ?? [])
-      .filter((u) => u.stockLots.length > 0 || u.strategyInstances.length > 0)
-      .map((u) => u.symbol);
+    const symbols = account ? holdingSymbols(account) : [];
+
+    // Live Wire: the routine watchlist, then every position held across the person's accounts.
+    const held = await prisma.underlying.findMany({
+      where: {
+        account: { userId, archivedAt: null },
+        OR: [{ stockLots: { some: { remaining: { gt: 0 } } } }, { strategyInstances: { some: { status: "OPEN" } } }],
+      },
+      select: { symbol: true },
+      distinct: ["symbol"],
+      orderBy: { symbol: "asc" },
+    });
+    const watched = new Set(WIRE_GROUPS.flatMap((g) => g.items.map((i) => i.symbol)));
+    const wire: WireGroup[] = [
+      ...WIRE_GROUPS,
+      {
+        key: "positions",
+        label: "Your positions",
+        items: held.map((h) => h.symbol.toUpperCase()).filter((s) => !watched.has(s)).map((s) => ({ symbol: s, label: s })),
+      },
+    ].filter((g) => g.items.length > 0);
 
     const marketSymbols = MARKET_SYMBOLS.map((m) => m.symbol);
-    const quotes = await getLiveQuotes([...marketSymbols, ...holdingSymbols]);
+    const quotes = await getLiveQuotes([...marketSymbols, ...symbols, ...wire.flatMap((g) => g.items.map((i) => i.symbol))]);
     const latencyMs = Date.now() - started;
-    const series = wantSeries ? await getIntradaySeries([...marketSymbols.slice(0, 4), ...holdingSymbols.slice(0, 12)]) : undefined;
+    const series = wantSeries ? await getIntradaySeries([...marketSymbols.slice(0, 4), ...symbols.slice(0, 12)]) : undefined;
 
     // ── Account snapshot ──
-    let accountPayload = null;
+    const accountPayload = account ? buildAccountSnapshot(account, quotes) : null;
     if (account) {
-      const cash = account.cashBalance.toNumber();
-      const reserve = account.cashflowReserve.toNumber();
-      const bucketValues = new Map<Bucket, number>(BUCKETS.map((b) => [b, 0]));
-      let holdingsValue = 0;
-      let dayChange = 0;
-      let costBasis = 0;
-
-      const holdings = account.underlyings
-        .filter((u) => u.stockLots.length > 0 || u.strategyInstances.length > 0)
-        .map((u) => {
-          const shares = u.stockLots.reduce((s, l) => s + l.remaining.toNumber(), 0);
-          const adjustedCost = u.stockLots.reduce((s, l) => {
-            const perShare = l.costBasis.div(l.quantity).minus(l.premiumReduction.div(l.quantity));
-            return s + perShare.mul(l.remaining).toNumber();
-          }, 0);
-          const q = quotes[u.symbol.toUpperCase()];
-          const price = q?.price ?? u.currentPrice?.toNumber() ?? (shares > 0 ? adjustedCost / shares : null);
-          const value = price != null ? price * shares : adjustedCost;
-          const change = q?.change ?? 0;
-          const bucket = (u.wheelClassification?.category ?? DEFAULT_BUCKET) as Bucket;
-
-          holdingsValue += value;
-          dayChange += change * shares;
-          costBasis += adjustedCost;
-          bucketValues.set(bucket, (bucketValues.get(bucket) ?? 0) + value);
-
-          return {
-            underlyingId: u.id,
-            symbol: u.symbol,
-            name: q?.name ?? null,
-            bucket,
-            shares,
-            price,
-            change: q?.change ?? null,
-            changePct: q?.changePct ?? null,
-            value,
-            costBasis: adjustedCost,
-            unrealized: shares > 0 && price != null ? value - adjustedCost : null,
-            openOptions: u.strategyInstances.length,
-          };
-        })
-        .sort((a, b) => b.value - a.value);
-
-      // Open options (from the last broker sync) count toward Speculation.
-      bucketValues.set("SPECULATION", (bucketValues.get("SPECULATION") ?? 0) + (account.syncedOptionValue?.toNumber() ?? 0));
-      // Cash and reserve count toward Free Money.
-      bucketValues.set("RISK_FREE_MONEY", (bucketValues.get("RISK_FREE_MONEY") ?? 0) + cash + reserve);
-      // Linked accounts include option market value from the last Schwab sync; equities mark live.
-      const optionValue = account.syncedOptionValue?.toNumber() ?? 0;
-      const netLiq = holdingsValue + cash + reserve + optionValue;
-      const targets = new Map(account.wheelTargets.map((t) => [t.category as Bucket, t.targetPct.toNumber()]));
-
-      accountPayload = {
-        id: account.id,
-        name: account.name,
-        mode: account.mode,
-        netLiq,
-        cash,
-        reserve,
-        holdingsValue,
-        costBasis,
-        unrealized: holdingsValue - costBasis,
-        dayChange,
-        dayChangePct: netLiq - dayChange > 0 ? (dayChange / (netLiq - dayChange)) * 100 : 0,
-        buckets: BUCKETS.map((b) => {
-          const value = bucketValues.get(b) ?? 0;
-          return {
-            bucket: b,
-            value,
-            actualPct: netLiq > 0 ? (value / netLiq) * 100 : 0,
-            targetPct: targets.get(b) ?? 0,
-          };
-        }),
-        holdings,
-      };
-
       // Keep stored prices fresh so the portfolio, statement and wheel use live marks.
       const now = Date.now();
       const writes = account.underlyings.filter((u) => {
@@ -225,6 +161,7 @@ export async function GET(req: NextRequest) {
       sync,
       feed: { source: "Yahoo Finance", latencyMs, delayed: true },
       marketSymbols: MARKET_SYMBOLS,
+      wire,
       quotes,
       series,
       account: accountPayload,

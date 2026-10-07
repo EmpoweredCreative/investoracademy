@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CalendarClock, Landmark } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Panel } from "@/components/live/primitives";
 import { CurveLegend, LineChart, YieldCurveChart, type Curve } from "@/components/charts/EconCharts";
-import { currentYields, dayLabel, monthLabel, shortDate, useMacro } from "@/components/routine/PulseStep";
+import { currentYields, monthLabel, shortDate, useMacro } from "@/components/routine/PulseStep";
+import { CalendarSourceNote, ReleaseCalendar } from "@/components/routine/ReleaseCalendar";
 import type { Point } from "@/lib/marketdata/fred";
 
 interface Series {
@@ -143,27 +144,14 @@ export default function EconomyPage() {
         </Panel>
 
         {/* Release calendar */}
-        <Panel title="Release calendar" subtitle="Next 30 days · times ET">
+        <Panel title="Release calendar" subtitle="This week through the next 30 days · times ET">
           {!macro ? (
             <div className="h-60 rounded-xl bg-border/30 animate-pulse" />
-          ) : macro.calendar.length === 0 ? (
-            <p className="text-sm text-muted">Nothing scheduled.</p>
           ) : (
-            <ul className="divide-y divide-border -my-2">
-              {macro.calendar.map((e) => (
-                <li key={`${e.date}-${e.label}`} className="flex items-center gap-3 py-2 text-sm">
-                  {e.kind === "fomc" ? (
-                    <Landmark className="w-4 h-4 text-accent shrink-0" />
-                  ) : (
-                    <CalendarClock className="w-4 h-4 text-muted shrink-0" />
-                  )}
-                  <span className={`flex-1 ${e.kind === "fomc" ? "font-semibold" : ""}`}>{e.label}</span>
-                  <span className="text-xs text-muted num whitespace-nowrap">
-                    {dayLabel(e.date)} · {e.time}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <div className="space-y-2">
+              <ReleaseCalendar events={macro.calendar} emptyText="Nothing scheduled." />
+              <CalendarSourceNote />
+            </div>
           )}
         </Panel>
       </div>

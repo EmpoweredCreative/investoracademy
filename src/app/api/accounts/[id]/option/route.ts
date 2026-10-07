@@ -39,6 +39,7 @@ export async function POST(
       price: data.price,
       entryDelta: data.entryDelta,
       fees: feesAmount,
+      buyingPowerEffect: data.buyingPowerEffect,
       occurredAt: new Date(data.occurredAt),
       strategyType: data.strategyType,
       premiumPolicyOverride: data.premiumPolicyOverride,

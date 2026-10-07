@@ -61,6 +61,8 @@ interface LivePayload {
   sync: BrokerSync | null;
   feed: { source: string; latencyMs: number; delayed: boolean };
   marketSymbols: { symbol: string; label: string }[];
+  /** Live Wire groups in display order (futures → market → sectors → positions). */
+  wire?: { key: string; label: string; items: { symbol: string; label: string }[] }[];
   quotes: Record<string, LiveQuote>;
   series?: Record<string, number[]>;
   account: LiveAccount | null;

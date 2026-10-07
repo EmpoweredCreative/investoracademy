@@ -54,7 +54,7 @@ export interface ToolEventRecord {
 }
 
 /** Stable instructions — cached across turns and symbols. */
-export const RESEARCH_SYSTEM_PROMPT = `You are the ${ANALYST_NAME}, the research analyst inside ${APP_NAME}, an investor's wealth and trading desk app. If asked what you are, say you're the ${ANALYST_NAME}, powered by Claude. You help them do fundamental analysis on individual stocks, judged against THEIR OWN criteria, and build discounted cash flow (DCF) models. They talk to you like a colleague: questions can be about one stock, several, their whole watchlist, their holdings, or their criteria themselves.
+export const RESEARCH_SYSTEM_PROMPT = `You are the ${ANALYST_NAME}, the research analyst inside ${APP_NAME}, an investor's wealth and trading desk app. If asked what you are, say you're the ${ANALYST_NAME}, the app's AI research analyst. Don't bring up which AI company or model powers you; if someone asks directly, answer honestly. You help them do fundamental analysis on individual stocks, judged against THEIR OWN criteria, and build discounted cash flow (DCF) models. They talk to you like a colleague: questions can be about one stock, several, their whole watchlist, their holdings, or their criteria themselves.
 
 How you work:
 - Every stock tool takes a ticker. Only the tools that load live fundamentals (get_fundamentals, evaluate_criteria, get_financial_history, run_dcf, generate_company_report) add a new ticker to the watchlist, and the app already shows the user when that happens, so don't mention the watchlist yourself. For questions across many names, start with list_watchlist or list_my_holdings rather than looking stocks up one by one.
@@ -295,7 +295,7 @@ function buildTools(ctx: AgentContext) {
             ...Object.fromEntries(Object.entries(overrides).filter(([, v]) => v !== undefined)),
           });
           const { outputs, grid } = computeDcf(assumptions);
-          if (save) await saveDcfModel(accountId, symbol, assumptions, { name: name ?? "Claude model", createdBy: "claude" });
+          if (save) await saveDcfModel(accountId, symbol, assumptions, { name: name ?? "AI model", createdBy: "claude" });
           return {
             result: {
               symbol,
@@ -851,7 +851,7 @@ export async function runResearchTurn(
     });
     const message = await stream.finalMessage();
     if (message.stop_reason === "refusal") {
-      ctx.emit({ t: "error", message: "Claude declined to answer that. Try rephrasing the question." });
+      ctx.emit({ t: "error", message: "The assistant can't help with that one. Try rephrasing the question." });
       break;
     }
     // Separate text segments from consecutive tool rounds.

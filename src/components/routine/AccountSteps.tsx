@@ -7,11 +7,8 @@ import { DeltaChip, fmtSigned, fmtUsd } from "@/components/live/primitives";
 import { BucketStrip } from "@/components/desk/Desk";
 import type { LiveAccount, LiveHolding } from "@/components/live/LiveProvider";
 import { StepLabel } from "./StepCard";
+import { SICK_DAY_PCT, SICK_UNREALIZED_PCT } from "@/lib/dashboard/attention";
 
-/** Unrealized loss % that flags a position for attention. */
-const SICK_UNREALIZED_PCT = -10;
-/** Daily drop % that flags a position for attention. */
-const SICK_DAY_PCT = -3;
 
 const unrealizedPct = (h: LiveHolding) =>
   h.unrealized != null && h.costBasis > 0 ? (h.unrealized / h.costBasis) * 100 : null;

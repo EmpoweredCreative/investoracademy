@@ -29,10 +29,16 @@ export async function POST(
       const entry = await tx.ledgerEntry.create({
         data: {
           accountId,
-          type: "CASH_DEPOSIT",
+          type: data.kind === "DIVIDEND" ? "DIVIDEND" : data.kind === "INTEREST" ? "INTEREST" : "CASH_DEPOSIT",
           amount,
           occurredAt: new Date(data.occurredAt),
-          description: data.notes || `Cash deposit of $${data.amount.toFixed(2)}`,
+          description:
+            data.notes ||
+            (data.kind === "DIVIDEND"
+              ? `Dividend${data.symbol ? ` · ${data.symbol.toUpperCase()}` : ""} $${data.amount.toFixed(2)}`
+              : data.kind === "INTEREST"
+                ? `Interest $${data.amount.toFixed(2)}`
+                : `Cash deposit of $${data.amount.toFixed(2)}`),
         },
       });
 

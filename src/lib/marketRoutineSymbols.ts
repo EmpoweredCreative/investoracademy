@@ -69,3 +69,52 @@ export const FUTURES: { symbol: string; label: string; name: string }[] = [
   { symbol: "SI=F", label: "/SI", name: "Silver" },
   { symbol: "^VIX", label: "VIX", name: "Volatility" },
 ];
+
+/**
+ * Live Wire order, broad market to sectors (like a trader's daily watchlist).
+ * Positions held across the person's accounts are appended as a final group.
+ */
+export interface WireItem {
+  symbol: string; // Yahoo ticker
+  label: string;
+}
+export interface WireGroup {
+  key: string;
+  label: string;
+  items: WireItem[];
+}
+
+export const WIRE_GROUPS: WireGroup[] = [
+  {
+    key: "futures",
+    label: "Futures",
+    items: [
+      { symbol: "ES=F", label: "/ES" },
+      { symbol: "YM=F", label: "/YM" },
+      { symbol: "NQ=F", label: "/NQ" },
+      { symbol: "RTY=F", label: "/RTY" },
+      { symbol: "^VIX", label: "VIX" },
+      { symbol: "CL=F", label: "/CL" },
+      { symbol: "GC=F", label: "/GC" },
+      { symbol: "SI=F", label: "/SI" },
+    ],
+  },
+  {
+    key: "market",
+    label: "Market",
+    items: [
+      { symbol: "SPY", label: "SPY" },
+      { symbol: "RSP", label: "RSP" },
+      { symbol: "DIA", label: "DIA" },
+      { symbol: "QQQ", label: "QQQ" },
+      { symbol: "IWM", label: "IWM" },
+      { symbol: "DX-Y.NYB", label: "DXY" },
+      { symbol: "^TNX", label: "10Y" },
+    ],
+  },
+  {
+    key: "sectors",
+    label: "Sectors",
+    items: ["XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLU", "XLV", "XLY", "XLRE", "XRT"].map((s) => ({ symbol: s, label: s })),
+  },
+];

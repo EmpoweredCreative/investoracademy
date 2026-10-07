@@ -24,7 +24,10 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body className="antialiased min-h-screen">{children}</body>
+      {/* Extensions (e.g. ColorZilla's cz-shortcut-listen) add attributes to <body> before React loads. */}
+      <body className="antialiased min-h-screen" suppressHydrationWarning>
+        {children}
+      </body>
     </html>
   );
 }

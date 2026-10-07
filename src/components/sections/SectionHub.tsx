@@ -5,7 +5,8 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { useSelectedAccount } from "@/contexts/SelectedAccountContext";
-import { type Section, toolHref } from "@/lib/sections";
+import { type Section, toolHref, visibleGroups } from "@/lib/sections";
+import { hasBusinessProfile, useProfileType } from "./useProfileType";
 
 /** Title block at the top of a section hub. */
 export function SectionHeader({ section, right }: { section: Section; right?: ReactNode }) {
@@ -27,10 +28,11 @@ export function SectionHeader({ section, right }: { section: Section; right?: Re
 /** Grid of tool cards for a section, grouped. */
 export function ToolGrid({ section }: { section: Section }) {
   const { selectedAccountId } = useSelectedAccount();
+  const groups = visibleGroups(section, hasBusinessProfile(useProfileType()));
 
   return (
     <div className="space-y-6">
-      {section.groups.map((group) => (
+      {groups.map((group) => (
         <section key={group.label} className="space-y-3">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.12em]">{group.label}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">

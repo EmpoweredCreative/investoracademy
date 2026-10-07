@@ -140,6 +140,7 @@ export default function OptionEntryPage() {
   const [symbol, setSymbol] = useState("");
   const [expiration, setExpiration] = useState("");
   const [fees, setFees] = useState("0");
+  const [bpe, setBpe] = useState("");
   const [occurredAt, setOccurredAt] = useState(
     new Date().toISOString().slice(0, 16)
   );
@@ -195,6 +196,7 @@ export default function OptionEntryPage() {
           const n = parseFloat(String(fees || "0").trim());
           return Number.isNaN(n) ? 0 : n;
         })(),
+        buyingPowerEffect: bpe.trim() && !Number.isNaN(parseFloat(bpe)) ? parseFloat(bpe) : undefined,
         occurredAt: new Date(occurredAt).toISOString(),
         premiumPolicyOverride: premiumPolicy || undefined,
         wheelCategoryOverride: wheelCategory || undefined,
@@ -404,6 +406,16 @@ export default function OptionEntryPage() {
               placeholder="0.65"
               min="0"
               step="0.01"
+            />
+            <Input
+              label="Buying power effect (optional)"
+              type="number"
+              value={bpe}
+              onChange={(e) => setBpe(e.target.value)}
+              placeholder="From your order ticket"
+              min="0"
+              step="0.01"
+              hint="Used for ROI on capital. Leave blank to estimate."
             />
             <Input
               label="Date & Time"

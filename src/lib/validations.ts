@@ -62,6 +62,8 @@ export const optionEntrySchema = z.object({
   price: z.number().min(0),
   entryDelta: z.number().min(-1).max(1).optional(),
   fees: z.number().min(0).default(0),
+  /** Buying power the broker holds for the whole trade (BPE), from the order ticket. */
+  buyingPowerEffect: z.number().min(0).optional(),
   occurredAt: z.string().datetime(),
   strategyType: z.enum([
     "COVERED_CALL", "SHORT_PUT",
@@ -186,6 +188,9 @@ export const researchIdeaSchema = z.object({
 
 // ─── Cash Deposit ──────────────────────────────────────────
 export const depositSchema = z.object({
+  /** DEPOSIT (default), DIVIDEND or INTEREST — all add cash. */
+  kind: z.enum(["DEPOSIT", "DIVIDEND", "INTEREST"]).default("DEPOSIT"),
+  symbol: z.string().trim().max(12).optional(),
   amount: z.number().positive(),
   occurredAt: z.string().datetime(),
   notes: z.string().max(500).optional(),
