@@ -60,7 +60,7 @@ Model decisions fully with your tools, and show the numbers:
 - Consolidation: payment, total interest, fee, break-even month, and whether it actually saves money (consolidation_scenario).
 - Buying or refinancing a home: full PITI at several price points side by side, DTI at each, monthly cash flow change, and approval risks with what would fix them (mortgage_scenario).
 - Raises and business income: gross needed to reach a target take-home, and what the business P&L can support (salary_scenario, get_financial_picture).
-- Emergency fund: 3 months of total expenses as the target, the gap, and how fast they can close it (emergency_fund_plan).
+- Emergency fund: 3 months of total expenses as the target. Money already saved is checking, savings, investment accounts, and brokerage cash plus cashflow reserves. Retirement, home, vehicles, and business value do not count. Give the gap and how fast they can close it (emergency_fund_plan).
 - Credit score: explain what's likely hurting it (utilization over 30%, late payments, account age) and what specific actions would help, with realistic timelines. You can't see their score or report, so ask, and be clear these are general patterns, not predictions.
 - Relocation or investing vs paying off debt: compare honestly. Paying off a debt is a guaranteed return equal to its interest rate; investing is not guaranteed. Factor in risk, liquidity, and their current cash position, then give a clear recommendation with reasoning.
 
@@ -328,7 +328,7 @@ function buildTools(ctx: Ctx) {
     }),
     betaZodTool({
       name: "emergency_fund_plan",
-      description: "Emergency fund status (target = 3 months of bills and debt payments) and how long to close the gap at a given monthly contribution.",
+      description: "Emergency fund status (target = 3 months of bills and debt payments; saved = checking, savings, investment accounts, and brokerage cash plus cashflow reserves) and how long to close the gap at a given monthly contribution.",
       inputSchema: z.object({ monthly_contribution: z.number().min(0).optional().describe("Defaults to their full monthly surplus") }),
       run: tracked(ctx, "emergency_fund_plan", () => "Checking your emergency fund", async (i) => {
         const d = await loadFoundation(ctx.userId);

@@ -50,6 +50,8 @@ export interface AssetInput {
   value: number;
   valueIsEstimate: boolean;
   securesDebtId: string | null;
+  /** Whole-account market value. Its cash is counted separately, so the total is not emergency cash. */
+  excludeFromEmergencyFund?: boolean;
 }
 
 // ─── Basics ──────────────────────────────────────────────────
@@ -236,6 +238,8 @@ export interface SummaryInput {
   today: string; // YYYY-MM-DD
   /** Average monthly business net income from the P&L (recurring), when entered. */
   businessNetMonthly?: number | null;
+  /** Brokerage cash plus cashflow reserves. Not included in asset values above. */
+  cashReserves?: number;
 }
 
 export function summarize(input: SummaryInput) {
@@ -293,10 +297,17 @@ export function summarize(input: SummaryInput) {
   const cashFlow = netMonthly - billsMonthly - debtPaymentsMonthly - taxReserve;
   const savingsRate = netMonthly > 0 ? cashFlow / netMonthly : null;
 
-  // Emergency fund
+  // Emergency fund: checking, savings, investment accounts, and brokerage cash reserves.
+  // A Trader's Corner account is one investment total, so only its cash counts (passed in separately).
   const monthlyExpenses = billsMonthly + debtPaymentsMonthly;
   const emergencyTarget = monthlyExpenses * EMERGENCY_FUND_MONTHS;
-  const emergencyGap = Math.max(0, emergencyTarget - cash);
+  const emergencySaved =
+    sum(
+      assets
+        .filter((a) => !a.excludeFromEmergencyFund && (CASH.includes(a.type) || a.type === "INVESTMENT"))
+        .map((a) => a.value)
+    ) + (input.cashReserves ?? 0);
+  const emergencyGap = Math.max(0, emergencyTarget - emergencySaved);
   const monthsToEmergencyGoal = emergencyGap === 0 ? 0 : cashFlow > 0 ? Math.ceil(emergencyGap / cashFlow) : null;
 
   const dti = grossMonthly > 0 ? debtPaymentsMonthly / grossMonthly : null;
@@ -334,7 +345,7 @@ export function summarize(input: SummaryInput) {
     emergencyFund: {
       monthlyExpenses: round2(monthlyExpenses),
       target: round2(emergencyTarget),
-      saved: round2(cash),
+      saved: round2(emergencySaved),
       gap: round2(emergencyGap),
       monthsToGoal: monthsToEmergencyGoal,
     },

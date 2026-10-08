@@ -93,7 +93,7 @@ export default function FoundationHubPage() {
                 hint={
                   ef.target === 0
                     ? "Add bills to set a goal"
-                    : `Goal ${fmtMoney(ef.target)} (3 months)${ef.gap > 0 && ef.monthsToGoal != null ? ` · ~${ef.monthsToGoal} mo at your surplus` : ""}`
+                    : `Goal ${fmtMoney(ef.target)} (3 months)${ef.saved > 0 ? ` · ${fmtMoney(ef.saved)} on hand` : ""}${ef.gap > 0 && ef.monthsToGoal != null ? ` · ~${ef.monthsToGoal} mo at your surplus` : ""}`
                 }
               />
               <Tile

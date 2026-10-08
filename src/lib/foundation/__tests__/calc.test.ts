@@ -139,6 +139,22 @@ describe("summarize", () => {
     expect(s.cashFlow.taxReserve).toBe(0);
   });
 
+  it("counts investment accounts and brokerage cash reserves toward the emergency fund", () => {
+    const s = summarize({
+      ...base,
+      cashReserves: 500,
+      assets: [
+        ...base.assets,
+        { id: "a4", name: "Brokerage", type: "INVESTMENT", value: 1000, valueIsEstimate: false, securesDebtId: null },
+        { id: "account:live", name: "Schwab", type: "INVESTMENT", value: 50_000, valueIsEstimate: false, securesDebtId: null, excludeFromEmergencyFund: true },
+      ],
+    });
+    expect(s.assets.cash).toBe(2000);
+    expect(s.emergencyFund.saved).toBe(3500); // checking 2000 + investment 1000 + reserves 500; the brokerage total is excluded
+    expect(s.emergencyFund.gap).toBe(0);
+    expect(s.emergencyFund.monthsToGoal).toBe(0);
+  });
+
   it("reserves 25% of business income for business owners", () => {
     const s = summarize({
       ...base,

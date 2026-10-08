@@ -137,20 +137,26 @@ export function toData(input: Row): Row {
 // ─── Trader's Corner accounts as assets ──────────────────────
 
 /** Real (non-simulated) investment accounts, valued the same way as Trader's Corner (live quotes). */
-async function tradingAccountAssets(userId: string): Promise<AssetInput[]> {
+async function tradingAccounts(userId: string): Promise<{ assets: AssetInput[]; cashReserves: number }> {
   const accounts = await prisma.account.findMany({
     where: { userId, archivedAt: null, mode: { not: "SIMULATED" } },
     include: ACCOUNT_SNAPSHOT_INCLUDE,
   });
   const quotes = await getLiveQuotes(accounts.flatMap(holdingSymbols));
-  return accounts.map((a) => ({
-    id: `account:${a.id}`,
-    name: `${a.name} (Trader's Corner)`,
-    type: "INVESTMENT",
-    value: Math.round(buildAccountSnapshot(a, quotes).netLiq * 100) / 100,
-    valueIsEstimate: false,
-    securesDebtId: null,
-  }));
+  const snapshots = accounts.map((a) => buildAccountSnapshot(a, quotes));
+  return {
+    assets: accounts.map((a, i) => ({
+      id: `account:${a.id}`,
+      name: `${a.name} (Trader's Corner)`,
+      type: "INVESTMENT" as const,
+      value: Math.round(snapshots[i].netLiq * 100) / 100,
+      valueIsEstimate: false,
+      securesDebtId: null,
+      // Net liquidation includes stocks. Emergency cash uses cash and the cashflow reserve only.
+      excludeFromEmergencyFund: true,
+    })),
+    cashReserves: Math.round(snapshots.reduce((sum, s) => sum + s.cash + s.reserve, 0) * 100) / 100,
+  };
 }
 
 // ─── Summary ─────────────────────────────────────────────────
@@ -179,8 +185,9 @@ export async function loadFoundation(userId: string, opts: { businessEnd?: strin
     prisma.bill.findMany({ where: { userId }, orderBy: [{ category: "asc" }, { createdAt: "asc" }] }),
     prisma.debt.findMany({ where: { userId }, orderBy: { createdAt: "asc" } }),
     prisma.asset.findMany({ where: { userId }, orderBy: { createdAt: "asc" } }),
-    user.includeTradingInNetWorth ? tradingAccountAssets(userId) : Promise.resolve([]),
+    tradingAccounts(userId),
   ]);
+  const tradingAssets = user.includeTradingInNetWorth ? trading.assets : [];
 
   const today = todayIn(user.timezone);
   const hasBusiness = user.profileType === "BUSINESS_OWNER" || user.profileType === "BOTH";
@@ -199,15 +206,16 @@ export async function loadFoundation(userId: string, opts: { businessEnd?: strin
     incomes: s.incomes as IncomeInput[],
     bills: s.bills as BillInput[],
     debts: s.debts as DebtInput[],
-    assets: [...(s.assets as AssetInput[]), ...trading],
+    assets: [...(s.assets as AssetInput[]), ...tradingAssets],
     today,
     businessNetMonthly: latestBusiness && latestBusiness.pnl.monthsWithData > 0 ? latestBusiness.pnl.average.recurringNet : null,
+    cashReserves: trading.cashReserves,
   });
   return {
     profile: { type: user.profileType, includeTradingInNetWorth: user.includeTradingInNetWorth },
     today,
     ...s,
-    tradingAssets: trading,
+    tradingAssets,
     business,
     summary,
   };
